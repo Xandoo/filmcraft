@@ -129,7 +129,8 @@ pub fn import(s: &mut Session, path: &str, bytes: &[u8], format: Format, bin: Op
                 continue;
             }
         };
-        match s.media.open_file(&file, &*s.services).ok() {
+        let source = s.project.item(id).and_then(|i| i.as_media()).and_then(|m| s.media.open_media(&file, m, &*s.services).ok());
+        match source {
             Some(src) => {
                 let info = src.info().clone();
                 let identity = crate::relink::identity_of(&*s.services, &file).ok();
@@ -150,7 +151,9 @@ pub fn import(s: &mut Session, path: &str, bytes: &[u8], format: Format, bin: Op
                     proj.resolve_placed_auto_points(|seq| !before.contains(&seq), |source| source.id == id);
                     Ok(())
                 })?;
-                s.media.insert_file(id, &mpath, src);
+                if let Some(m) = s.project.item(id).and_then(|i| i.as_media()) {
+                    s.media.insert_selected_file(id, &mpath, crate::media_pool::media_key(m), src);
+                }
                 linked += 1;
             }
             None => offline.push(mpath),

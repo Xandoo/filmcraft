@@ -510,7 +510,7 @@ fn project_captured_folder_outside_the_project_is_not_used() {
             Ok(())
         })
         .unwrap();
-        assert_eq!(crate::voiceover::media_dir(&s, &serde_json::Value::Null, "Captured"), beside, "{dir}");
+        assert_eq!(crate::voiceover::media_dir(&s, &serde_json::Value::Null, "Captured"), show.join("Captured").to_string_lossy(), "{dir}");
         let paths = crate::project_tools::scratch_paths(&s);
         assert_eq!(paths["captured"]["path"], json!(beside), "{dir}");
         assert_eq!(paths["audioPreviews"]["path"], json!(beside), "{dir}");

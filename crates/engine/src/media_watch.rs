@@ -125,6 +125,7 @@ impl Session {
         }
         let mut fresh = Vec::new();
         let mut failed = BTreeSet::new();
+        let mut invalidated_stream = false;
         for (id, it) in &self.project.items {
             let Some(m) = it.as_media().filter(|m| !m.offline) else { continue };
             let MediaRef::File { path } = &m.media else { continue };
@@ -133,7 +134,7 @@ impl Session {
             }
             let Ok(file) = self.media.follow(path) else { continue };
             // Opened the way import opens it, so the info is what a new import would get.
-            match self.media.open_file(&file, &*self.services) {
+            match self.media.open_media(&file, m, &*self.services) {
                 Ok(src) => {
                     let mut info = src.info().clone();
                     if info.kind == filmcraft_media::MediaKind::Still
@@ -145,13 +146,21 @@ impl Session {
                     fresh.push((*id, path.clone(), info, identity, src));
                 }
                 Err(_) => {
-                    failed.insert(path.clone());
+                    if m.stream.is_some() {
+                        self.media.remove(*id);
+                        invalidated_stream = true;
+                    } else {
+                        failed.insert(path.clone());
+                    }
                 }
             }
         }
         // A file that can't be opened (still being written, or not media FilmCraft reads) keeps its
         // new stamp: it is tried again once it changes again, not on every look.
         if fresh.is_empty() {
+            if invalidated_stream {
+                self.bump_view();
+            }
             return Ok(json!({"refreshed": []}));
         }
         let p = Arc::make_mut(&mut self.project);
@@ -163,7 +172,9 @@ impl Session {
                     m.identity = identity;
                 }
             }
-            self.media.insert_file(id, &path, src);
+            if let Some(m) = p.item(id).and_then(|i| i.as_media()) {
+                self.media.insert_selected_file(id, &path, crate::media_pool::media_key(m), src);
+            }
             refreshed.push(id);
         }
         self.bump_view();

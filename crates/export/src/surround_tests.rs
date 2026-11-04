@@ -55,6 +55,8 @@ fn surround() -> (Arc<Project>, ItemId, SourceMap) {
         "tones51",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::File { path: "/tones51.wav".into() },
             info: info.clone(),
             interpret: Default::default(),

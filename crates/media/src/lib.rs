@@ -327,3 +327,5 @@ mod importable_tests {
         assert!(resample_source_frames(usize::MAX, MAX_AUDIO_SAMPLE_RATE, 1).is_err());
     }
 }
+
+pub mod streams;

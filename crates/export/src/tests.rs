@@ -15,6 +15,8 @@ pub(crate) fn project() -> (Arc<Project>, ItemId, SourceMap) {
             &info.name.clone(),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(g.generator.clone()),
                 info,
                 interpret: Default::default(),
@@ -231,6 +233,8 @@ fn caption_burn_in_h264_ffmpeg_oracle() {
         "matte",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(g.generator.clone()),
             info,
             interpret: Default::default(),
@@ -401,6 +405,8 @@ fn gpu_hook_scenarios() {
             &info.name.clone(),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(g.generator.clone()),
                 info,
                 interpret: Default::default(),

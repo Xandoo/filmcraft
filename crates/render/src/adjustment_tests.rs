@@ -23,6 +23,8 @@ fn media(p: &mut Project, map: &mut SourceMap, g: GeneratorSource) -> ItemId {
         &info.name.clone(),
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(generator),
             info,
             interpret: Default::default(),

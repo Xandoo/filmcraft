@@ -33,6 +33,8 @@ pub fn make_movie_at(path: &Path, scene: DemoScene, w: u32, h: u32, rate: FrameR
     let info = src.info().clone();
     let mut p = Project::new("fixture");
     let clip = MediaClip {
+        stream: None,
+        recording: None,
         media: MediaRef::Generator(Generator::Demo(scene)),
         info,
         interpret: Default::default(),

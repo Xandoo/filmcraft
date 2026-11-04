@@ -14,7 +14,8 @@ default = []
 # Whisper inference on the CPU via candle (pure Rust). Off by default (and in wasm builds).
 whisper = ["dep:candle-core", "dep:candle-nn"]
 # Model downloads over HTTPS (pure-Rust TLS: rustls + RustCrypto, OS certificate verification).
-download = ["dep:ureq", "dep:rustls", "dep:rustls-rustcrypto"]
+download = ["dep:ureq", "dep:rustls", "dep:rustls-rustcrypto", "dep:tempfile"]
+gpu-speech = ["dep:burn", "dep:safetensors", "dep:rustfft"]
 
 [dependencies]
 filmcraft-time = { workspace = true }
@@ -29,10 +30,18 @@ ureq = { version = "3", default-features = false, features = ["rustls-no-provide
 rustls = { version = "0.23", default-features = false, optional = true }
 rustls-rustcrypto = { version = "0.0.2-alpha", optional = true }
 sha2 = "0.10"
+burn = { version = "0.19.1", default-features = false, features = ["std", "ndarray", "wgpu"], optional = true }
+safetensors = { version = "0.6", optional = true }
+rustfft = { version = "6.4", optional = true }
+tempfile = { version = "3.27", optional = true }
 
 [[example]]
 name = "transcribe"
 required-features = ["whisper"]
+
+[[example]]
+name = "local_transcribe"
+required-features = ["gpu-speech"]
 
 [dev-dependencies]
 tempfile = "3.27"

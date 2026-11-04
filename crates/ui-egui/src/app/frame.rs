@@ -50,23 +50,29 @@ impl FilmcraftApp {
         if self.ui.tts.pending.is_some() || self.ui.tts.download_job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
+        let project_selection = self.project_selection_runtime.enabled && self.ui.project_selection.active;
         let t = self.tokens;
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, t.app_bg);
-        let header_h = if self.ui.show_header { header::HEIGHT } else { 0.0 };
+        let header_h = if self.ui.show_header && !project_selection { header::HEIGHT } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
-        if self.ui.show_header {
+        if self.ui.show_header && !project_selection {
             header::show(self, ui, header);
         }
         let status_h = if self.ui.show_status_bar { 20.0 } else { 0.0 };
         let body = egui::Rect::from_min_max(egui::pos2(full.min.x + 1.0, header.max.y + 1.0), egui::pos2(full.max.x - 1.0, full.max.y - status_h - 2.0));
-        match self.ui.mode {
-            state::Mode::Edit => self.dock_area(ui, body),
-            state::Mode::Import => panels::import_mode::show(self, ui, body),
-            state::Mode::Export => panels::export_mode::show(self, ui, body),
+        if project_selection {
+            crate::project_selection::show(self, ui, body);
+        } else {
+            match self.ui.mode {
+                state::Mode::Edit => self.dock_area(ui, body),
+                state::Mode::Import => panels::import_mode::show(self, ui, body),
+                state::Mode::Export => panels::export_mode::show(self, ui, body),
+            }
         }
         // the Timeline has had its chance to place a file drop this frame; anything left stays a bin import
         self.pending_timeline_drop = None;
+        self.finish_timeline_scrub(&ctx);
         panels::dialogs::show(self, &ctx);
         panels::file_dialogs::show_overwrite(self, &ctx);
         updates_ui::show(self, &ctx);
@@ -101,7 +107,13 @@ impl FilmcraftApp {
                 }
             }
         }
-        let hint = if !self.ui.status.is_empty() { self.ui.status.clone() } else { self.hint_text() };
+        let hint = if !self.ui.status.is_empty() {
+            self.ui.status.clone()
+        } else if project_selection {
+            String::new()
+        } else {
+            self.hint_text()
+        };
         // the bar goes under the text and the job's controls, so they get their own clicks
         let resp = ui.interact(sb, egui::Id::unique("status-bar"), egui::Sense::click());
         if resp.clicked() {

@@ -104,7 +104,16 @@ pub fn is_graphic_clip(app: &FilmcraftApp, c: ClipId) -> bool {
 /// The selected graphic clip, if any.
 pub fn selected_graphic(app: &FilmcraftApp) -> Option<(ClipId, TrackItem)> {
     let q = app.session.active_sequence()?;
-    app.session.state.selection.iter().copied().find(|c| is_graphic_clip(app, *c)).and_then(|c| q.find_item(c).map(|(_, it)| (c, it.clone())))
+    app.session
+        .state
+        .selection
+        .iter()
+        .copied()
+        .filter(|c| is_graphic_clip(app, *c))
+        .min_by_key(|c| {
+            app.session.state.selection.len() > 1 && !q.find_item(*c).is_some_and(|(_, it)| it.effects.iter().any(|e| e.effect == graphic::TEXT_LAYER))
+        })
+        .and_then(|c| q.find_item(c).map(|(_, it)| (c, it.clone())))
 }
 
 /// Whether the Properties panel should show the graphic editor.

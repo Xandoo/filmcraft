@@ -43,6 +43,8 @@ fn generated_fixture(secs: u32) -> Option<PathBuf> {
     let src = GeneratorSource::new(scene.clone(), w, h, rate, dur);
     let mut p = Project::new("fixture");
     let clip = MediaClip {
+        stream: None,
+        recording: None,
         media: MediaRef::Generator(scene),
         info: src.info().clone(),
         interpret: Default::default(),

@@ -28,6 +28,8 @@ pub fn add_generator(p: &mut Project, pool: &MediaPool, src: GeneratorSource, na
         i
     };
     let clip = MediaClip {
+        stream: None,
+        recording: None,
         media: MediaRef::Generator(src.generator.clone()),
         info,
         interpret: Default::default(),

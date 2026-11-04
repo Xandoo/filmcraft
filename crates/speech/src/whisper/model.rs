@@ -159,6 +159,8 @@ impl Block {
 }
 
 pub struct Encoder {
+    #[cfg(feature = "gpu-speech")]
+    gpu: Option<super::gpu::Encoder>,
     conv1: Conv1d,
     conv2: Conv1d,
     pos: Tensor,
@@ -173,6 +175,8 @@ impl Encoder {
         let c2 = Conv1dConfig { padding: 1, stride: 2, ..Default::default() };
         Ok(Self {
             conv1: candle_nn::conv1d(cfg.num_mel_bins, d, 3, c1, vb.pp("conv1"))?,
+            #[cfg(feature = "gpu-speech")]
+            gpu: None,
             conv2: candle_nn::conv1d(d, d, 3, c2, vb.pp("conv2"))?,
             pos: vb.get((cfg.max_source_positions, d), "embed_positions.weight")?,
             blocks: (0..cfg.encoder_layers).map(|i| Block::new(d, cfg.encoder_attention_heads, false, vb.pp(format!("layers.{i}")))).collect::<Result<_>>()?,
@@ -182,6 +186,10 @@ impl Encoder {
 
     /// `mel`: (1, n_mels, 3000) → (1, 1500, d).
     pub fn forward(&mut self, mel: &Tensor) -> Result<Tensor> {
+        #[cfg(feature = "gpu-speech")]
+        if let Some(gpu) = &mut self.gpu {
+            return gpu.forward(mel);
+        }
         let x = self.conv1.forward(mel)?.gelu_erf()?;
         let x = self.conv2.forward(&x)?.gelu_erf()?;
         let x = x.transpose(1, 2)?;
@@ -195,6 +203,8 @@ impl Encoder {
 }
 
 pub struct Decoder {
+    #[cfg(feature = "gpu-speech")]
+    gpu: Option<super::gpu::Decoder>,
     tok: Embedding,
     /// The token embedding transposed (d, vocab), contiguous: the output projection.
     tok_t: Tensor,
@@ -211,6 +221,8 @@ impl Decoder {
         let tok = candle_nn::embedding(cfg.vocab_size, d, vb.pp("embed_tokens"))?;
         Ok(Self {
             tok_t: tok.embeddings().t()?.contiguous()?,
+            #[cfg(feature = "gpu-speech")]
+            gpu: None,
             tok,
             pos: vb.get((cfg.max_target_positions, d), "embed_positions.weight")?,
             blocks: (0..cfg.decoder_layers).map(|i| Block::new(d, cfg.decoder_attention_heads, true, vb.pp(format!("layers.{i}")))).collect::<Result<_>>()?,
@@ -221,6 +233,10 @@ impl Decoder {
 
     /// Forget the cached keys/values (new audio window or new token sequence).
     pub fn reset(&mut self) {
+        #[cfg(feature = "gpu-speech")]
+        if let Some(gpu) = &mut self.gpu {
+            gpu.reset();
+        }
         self.offset = 0;
         for b in &mut self.blocks {
             b.reset();
@@ -235,6 +251,10 @@ impl Decoder {
     /// Logits (1, t, vocab) for `tokens` appended to the cache. With `qk_heads`, also returns the
     /// cross-attention logits of those (layer, head) pairs: (heads, t, audio frames).
     pub fn forward(&mut self, tokens: &[u32], xa: &Tensor, cached: bool, qk_heads: Option<&[(usize, usize)]>) -> Result<(Tensor, Option<Tensor>)> {
+        #[cfg(feature = "gpu-speech")]
+        if let Some(gpu) = &mut self.gpu {
+            return gpu.forward(tokens, xa, cached, qk_heads);
+        }
         let dev = xa.device();
         let t = tokens.len();
         let offset = if cached { self.offset } else { 0 };
@@ -271,6 +291,13 @@ pub struct Model {
 }
 
 impl Model {
+    #[cfg(feature = "gpu-speech")]
+    pub fn enable_gpu(&mut self, weights: &[u8]) -> std::result::Result<(), crate::SpeechError> {
+        let (encoder, decoder) = super::gpu::load(&self.cfg, weights)?;
+        self.encoder.gpu = Some(encoder);
+        self.decoder.gpu = Some(decoder);
+        Ok(())
+    }
     pub fn load(cfg: Config, weights: Vec<u8>) -> Result<Self> {
         let device = Device::Cpu;
         let vb = VarBuilder::from_buffered_safetensors(weights, DType::F32, &device)?;

@@ -198,9 +198,21 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: Val
 
 pub(crate) fn menu_items_with_focus(app: &FilmcraftApp, ctx: &egui::Context) -> Vec<MenuItem> {
     let mut items = menu_items(app);
+    for item in &mut items {
+        if let Some(enabled) = crate::panels::animation::command_enabled(app, &item.id) {
+            item.enabled = enabled;
+        }
+    }
     if text_field_window(ctx).is_some() {
         for item in items.iter_mut().filter(|item| edits_text(&item.id)) {
             item.enabled = true;
+        }
+    }
+    if app.project_selection_runtime.enabled && app.ui.project_selection.active {
+        for item in &mut items {
+            if !crate::project_selection::allowed_on_selection(&item.id) {
+                item.enabled = false;
+            }
         }
     }
     items
@@ -208,6 +220,12 @@ pub(crate) fn menu_items_with_focus(app: &FilmcraftApp, ctx: &egui::Context) -> 
 
 /// Execute a UI or engine command by id.
 pub fn invoke_command(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params: Value) -> Result<Value, String> {
+    if let Some(result) = crate::project_selection::route(app, ctx, id, &params) {
+        return result;
+    }
+    if let Some(result) = crate::panels::animation::command(app, id) {
+        return result;
+    }
     // Select All / Deselect All act on the Project panel's items when it has focus (#168), only
     // what the shown bin lists (#456). Here and not in the key handling: on macOS the native menu
     // takes Cmd+A once Select All is enabled (a sequence is open) and sends the id here (#1752).
@@ -956,6 +974,13 @@ pub fn menu_items(app: &FilmcraftApp) -> Vec<MenuItem> {
     }
     crate::panels::workspaces::menu(app, &mut v);
     open_recent(&mut v, &app.session, |n| app.ui.language.tr(n).to_string());
+    if app.project_selection_runtime.enabled && app.ui.project_selection.active {
+        for item in &mut v {
+            if !crate::project_selection::allowed_on_selection(&item.id) {
+                item.enabled = false;
+            }
+        }
+    }
     v
 }
 

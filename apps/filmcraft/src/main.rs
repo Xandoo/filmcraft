@@ -4,8 +4,7 @@
 //! [project.fcproj | media files…]`; `--help` prints the options, `--version` the version. An
 //! unknown option is an error (exit code 2), not a file to open.
 //!
-//! Without a project, `--demo` or `--empty`, Settings ▸ General ▸ At Startup decides: Show Home
-//! (the demo project), Open Most Recent, or an empty project.
+//! Without a project or an explicit `--demo` / `--empty` flag, show Project Selection.
 //!
 //! `--control <port>` (or `FILMCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server;
 //! `FILMCRAFT_CONTROL_TOKEN` is required (see `docs/control-protocol.md`).
@@ -242,27 +241,16 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
         let (project, media) = args::project_and_media(&files);
         if let Some(p) = project {
             if let Err(e) = session.execute("file.open", json!({"path": p})) {
+                session.project_closed = true;
+                session.toast(format!("Could not open project: {e}"));
                 log::error!("{e}");
             }
-        } else if !startup_flag && session.prefs.general.at_startup == "openMostRecent" {
-            // Settings ▸ General ▸ At Startup ▸ Open Most Recent
-            let recent = session.prefs.general.recent_projects.iter().find(|p| std::path::Path::new(p).exists()).cloned();
-            match recent {
-                Some(p) => {
-                    if let Err(e) = session.execute("file.open", json!({"path": p})) {
-                        log::error!("{e}");
-                    }
-                }
-                None => {
-                    let _ = session.execute("file.openDemoProject", json!({}));
-                }
+        } else if startup_flag && demo {
+            if let Err(e) = session.execute("file.openDemoProject", json!({})) {
+                log::error!("{e}");
             }
-        } else if !startup_flag && session.prefs.general.at_startup == "emptyProject" {
-        } else if demo {
-            let _ = session.execute("file.openDemoProject", json!({}));
-        }
-        if !media.is_empty() {
-            let _ = session.execute("file.import", json!({"paths": media}));
+        } else if !startup_flag {
+            session.project_closed = true;
         }
         if recover == Some(true) && !session.recovery_candidates().is_empty() {
             let id = session.recovery_candidates()[0].id.clone();
@@ -271,7 +259,18 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
                 Err(e) => log::error!("recovery failed: {e}"),
             }
         }
+        if !media.is_empty()
+            && !session.project_closed
+            && let Err(e) = session.execute("file.import", json!({"paths": media}))
+        {
+            log::error!("{e}");
+        }
         let mut app = FilmcraftApp::new(session);
+        app.project_selection_runtime.enabled = true;
+        if app.session.project_closed && !media.is_empty() {
+            app.project_selection_runtime.queued_imports = media;
+            filmcraft_ui_egui::project_selection::begin(&mut app, "empty", false);
+        }
         app.set_startup_update_check(true);
         app.graphics_notice = notice;
         if recover == Some(false) {

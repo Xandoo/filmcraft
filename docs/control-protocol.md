@@ -71,6 +71,46 @@ These limits also apply to the MCP bridge's `ui_click`, `ui_drag` and `ui_contro
 **Timeline thumbnails.** `ui.set {timeline: {thumbnails}}` sets the Timeline wrench menu's Show Video
 Thumbnails: `off`, `head`, `headAndTail` or `continuous`.
 
+**Workflow timeline controls.** `timeline.fixedPlayhead {enabled?: bool}` toggles the anchored
+playhead preference (`prefs.set` key `timeline.fixedPlayhead`, Preferences → Timeline). Enabling it
+forces `timeline.autoScroll` to `smoothScroll`; the Preferences dropdown stays disabled until fixed
+mode is off. `ui.set {timeline: {fixedPlayhead, playheadAnchor, videoTrackHeight, audioTrackHeight}}`
+controls the same preference and saved sequence geometry. The anchor is a fraction of the track area (default 0.5); the UI limits it
+to 10–90% with a 16-point edge margin. `timeline.playhead.anchor` identifies its draggable handle.
+Dragging the handle preserves time; fixed-mode ruler drags scrub time beneath it without jumping on
+press. In either mode, a ruler scrub pauses running playback and resumes at the dropped time on
+release, retaining playback speed/direction. Scrubbing while stopped leaves playback stopped.
+`sequence.cutAtPlayhead {}` (Shift+C) cuts selected clips and enabled linked partners, or all unlocked
+audio/video clips when selection is empty. A selection away from the playhead makes no edit.
+
+**Animation panels.** Window → Dope Sheet and Curve Editor open separate saved dock tabs
+(`dopeSheet` / `curveEditor` automation prefixes). They share `keyframeSelection` with Effect Controls.
+Use Shift/Ctrl selection, a marquee, horizontal dragging, the frame nudge buttons, and Copy/Paste/Delete.
+Ctrl-wheel zooms time; Shift-wheel pans; Fit selection fits selected keys, falling back to selected clips.
+`ui.set {animation: {pps, scroll, animatedOnly, components: [true,true,true,true]}}` controls the view.
+`effects.editKeyframes {edits: [{key: {clip,effect,param,mask?,time}, operation?: "set"|"put"|"delete",
+value?, inTangents?, outTangents?, inInfluence?, outInfluence?, tangentsLinked?, interpolation?}]}`
+commits an atomic edit. Key reference times are stored media ticks; tangent slopes are component
+value per media second. Panels display sequence time, including trim, speed and reverse conversion.
+Manual Bézier handles edit both time influence and value slope; linked tangents share their slope.
+
+**Background transcription.** `transcript.start {clips?: [clipId], items?: [id], model?, device?: "auto"|"gpu"|"cpu",
+language?, diarize?, maxSpeakers?, textTrack?}` returns `{job: id}`. Poll and cancel it through the existing jobs
+commands. Missing model files download automatically and are size/hash verified before loading.
+Completion applies a separate undoable edit on the session thread; stale or cancelled results are
+discarded. `transcript.generate` retains synchronous behavior. See [transcripts.md](transcripts.md)
+for model licensing, device behavior and measured GPU smoke checks.
+
+**Editable transcript graphics.** `transcript.createText {grouping: "characters"|"words",
+maxChars?: 32, maxWords?: 1, maxSeconds?: 7, pauseSeconds?: 0.8, breakSentences?: true,
+fontSize?: 72, name?: "Transcript Text"}` creates editable graphics on a new video track;
+returns `{track, count, clips}`. Pass the same settings as `textTrack` to transcription commands
+to create graphics together with the transcript in one undo step. UI settings are readable in
+`ui.inspect` as `ui.transcript_output` and writable with
+`ui.set {transcriptOutput: {enabled?, options?: {...}}}`. The dialog controls register
+`transcription.text.grouping`, `.maxChars` / `.maxWords`, `.maxSeconds`, `.pauseSeconds`,
+`.breakSentences`, `.fontSize`, `.name`, and (in Transcribe Sequence) `.enabled`.
+
 **Selection or explicit targets.** A command that acts on the selection is "not available right now" when
 nothing is selected. When `params` name the targets under a key the command documents (`clips` /
 `clip`: timeline clips of the active sequence, `items` / `item`: project items), enablement is
@@ -238,3 +278,25 @@ resizes the root split; path entries use `false` for the first child and `true` 
 the second. `{"action":{"MoveFloating":{"panel":"Info","rect":[45,65,420,320]}}}`
 repositions and resizes the floating group containing Info. Invalid actions leave the
 layout unchanged. Pointer gestures dispatch through this same catalog command.
+
+
+## Desktop project management
+
+- `file.createProject {name, parentDirectory, template?: "empty"|"demo", force?: bool}` creates and saves a new folder before replacing the session. Dirty sessions require saving first or explicit `force: true`.
+- `file.saveAsProject {name, parentDirectory, wait?: bool}` copies project-owned sources into a new folder and returns `{path, job}`. Use `jobs.list` / `jobs.cancel` for progress/cancellation. `wait: true` completes synchronously and reports write failures as errors.
+- `file.recentProjects {}` returns `{projects, listView, parentDirectory}`. Entries include `path`, `title`, optional UTC Unix timestamps `lastOpened`/`lastModified`, `bytes`, and last-known `available`. The UI refreshes filesystem metadata asynchronously without loading project media.
+- `file.locateRecentProject {previousPath, path}` opens the located project and replaces the old recent entry after a successful open. It refuses to discard unsaved work.
+- `file.removeRecentProject {path}` removes only local history/metadata; it never deletes the project.
+- `file.projectSelectionSettings {listView?, parentDirectory?}` persists the page layout and suggested creation location.
+
+The file-only `file.saveAs {path}` and `file.saveCopy {path}` interfaces and transient
+`file.newProject {name}` / `file.openDemoProject {}` remain available. Desktop menu actions without
+parameters use the saved-folder dialogs. Web hosts retain their browser file/storage flow.
+
+`ui.inspect.ui.project_selection` exposes page state, recent entries, creation draft, error and
+pending Save As job. Patch a draft with
+`ui.set {projectSelection: {create: {name, parentDirectory, template?, saveAs?}}}`.
+Automation IDs: `projects.new`, `projects.open`, `projects.demo`, `projects.grid`, `projects.list`,
+`projects.refresh`, `projects.recover`, `projects.item.<n>.open|thumbnail|locate|remove`,
+`projectCreate.name`, `projectCreate.parentDirectory`, `projectCreate.browse`, `projectCreate.path`,
+`projectCreate.create`, `projectCreate.cancel`, `projectCreate.error`.

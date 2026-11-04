@@ -117,7 +117,51 @@ fn point(app: &FilmcraftApp, p: &Value) -> Result<egui::Pos2, String> {
     Ok(egui::pos2(x as f32, y as f32))
 }
 
+fn set_transcript_output(app: &mut FilmcraftApp, p: &Value) -> Result<(), String> {
+    let Some(patch) = p.get("transcriptOutput") else { return Ok(()) };
+    let mut current = serde_json::to_value(&app.ui.transcript_output).map_err(|e| e.to_string())?;
+    merge(&mut current, patch);
+    let output: crate::panels::transcription::TextOutput = serde_json::from_value(current).map_err(|e| format!("bad transcript output settings: {e}"))?;
+    let value = serde_json::to_value(&output.options).map_err(|e| e.to_string())?;
+    filmcraft_engine::transcript::TextTrackOptions::from_params(&value).map_err(|e| e.to_string())?;
+    app.ui.transcript_output = output;
+    if let Some(draft) = app.ui.extras.dialog.as_mut().filter(|d| d.command == "transcript.createText") {
+        draft.params = value;
+    }
+    Ok(())
+}
+
+fn set_menu_dialog(app: &mut FilmcraftApp, p: &Value) -> Result<(), String> {
+    let Some(patch) = p.get("menuDialog").and_then(Value::as_object) else { return Ok(()) };
+    let draft = app.ui.extras.dialog.as_mut().ok_or("no menu dialog is open")?;
+    let mut params = draft.params.clone();
+    for (key, value) in patch {
+        params[key.as_str()] = value.clone();
+    }
+    if draft.command == "transcript.createText" {
+        filmcraft_engine::transcript::TextTrackOptions::from_params(&params).map_err(|e| e.to_string())?;
+    }
+    draft.params = params;
+    Ok(())
+}
+
 fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outcome {
+    if let Err(e) = set_transcript_output(app, p) {
+        return err(e);
+    }
+    if let Some(patch) = p.get("projectSelection")
+        && let Some(create) = patch.get("create")
+    {
+        if !app.project_selection_runtime.enabled {
+            return err("Managed project folders are unavailable on this host");
+        }
+        let mut draft = serde_json::to_value(app.ui.project_selection.create.clone().unwrap_or_default()).unwrap_or_default();
+        merge(&mut draft, create);
+        match serde_json::from_value(draft) {
+            Ok(draft) => app.ui.project_selection.create = Some(draft),
+            Err(e) => return err(format!("bad project creation draft: {e}")),
+        }
+    }
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     // Text to Speech panel draft (voice, pitch, pace, text…), merged into the current one
     if let Some(patch) = p.get("tts") {
@@ -167,6 +211,11 @@ fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outc
             PlaybackRes::ALL.into_iter().find(|x| x.label().eq_ignore_ascii_case(r) || format!("{x:?}").eq_ignore_ascii_case(r)).unwrap_or(app.ui.program.res);
     }
     if let Err(e) = set_timeline(app, p) {
+        return err(e);
+    }
+    if let Some(v) = p.get("animation")
+        && let Err(e) = app.ui.animation.update(v)
+    {
         return err(e);
     }
     if let Some(q) = s("effectsSearch") {
@@ -239,11 +288,8 @@ fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outc
         }
     }
     // fields of the open M3.11 menu dialog (`panels::menu_dialogs`)
-    if let Some(m) = p.get("menuDialog").and_then(Value::as_object) {
-        let Some(d) = app.ui.extras.dialog.as_mut() else { return err("no menu dialog is open") };
-        for (k, v) in m {
-            d.params[k.as_str()] = v.clone();
-        }
+    if let Err(e) = set_menu_dialog(app, p) {
+        return err(e);
     }
     ok(Value::Null)
 }
@@ -252,20 +298,27 @@ fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outc
 /// and the thumbnail mode.
 fn set_timeline(app: &mut FilmcraftApp, p: &Value) -> Result<(), String> {
     let Some(tl) = p.get("timeline") else { return Ok(()) };
+    if let Some(v) = tl.get("fixedPlayhead").and_then(Value::as_bool) {
+        app.session.execute("prefs.set", json!({"key": "timeline.fixedPlayhead", "value": v})).map_err(|e| e.to_string())?;
+        app.ui.timeline.fixed_playhead = v;
+    }
+    if let Some(v) = tl.get("playheadAnchor").and_then(Value::as_f64) {
+        app.ui.timeline.playhead_anchor = v.clamp(0.1, 0.9) as f32;
+    }
     if let Some(v) = tl.get("pps").and_then(Value::as_f64) {
-        app.ui.timeline.target_pps = v;
+        app.ui.timeline.target_pps = v.clamp(1e-3, 24000.0);
     }
     if let Some(v) = tl.get("scroll").and_then(Value::as_f64) {
-        app.ui.timeline.target_scroll = v;
+        app.ui.timeline.target_scroll = v.clamp(if app.ui.timeline.fixed_playhead { -1e7 } else { 0.0 }, 1e7);
     }
     if tl.get("fit").and_then(Value::as_bool) == Some(true) {
         app.ui.timeline.fit_pending = true;
     }
     if let Some(v) = tl.get("videoTrackHeight").and_then(Value::as_f64) {
-        app.ui.timeline.video_track_h = v as f32;
+        app.ui.timeline.video_track_h = v.clamp(8.0, 600.0) as f32;
     }
     if let Some(v) = tl.get("audioTrackHeight").and_then(Value::as_f64) {
-        app.ui.timeline.audio_track_h = v as f32;
+        app.ui.timeline.audio_track_h = v.clamp(8.0, 600.0) as f32;
     }
     if let Some(v) = tl.get("showVideoNames").and_then(Value::as_bool) {
         app.ui.timeline.show_video_names = v;
@@ -496,7 +549,12 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             let params = p.get("params").cloned().unwrap_or(json!({}));
             let invoke = if req.method == "engine.execute" { crate::menus::invoke_command } else { crate::menus::invoke };
-            match invoke(app, ctx, id, params) {
+            let result = if req.method == "engine.execute" && matches!(id, "file.newProject" | "file.openDemoProject") {
+                app.session.execute(id, params).map_err(|error| error.to_string())
+            } else {
+                invoke(app, ctx, id, params)
+            };
+            match result {
                 Ok(v) => ok(v),
                 Err(e) => err(e),
             }

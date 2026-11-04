@@ -31,7 +31,7 @@ pub struct Tokenizer {
 }
 
 /// GPT-2's byte → printable character table, inverted.
-fn unicode_to_byte() -> HashMap<char, u8> {
+fn unicode_to_byte() -> Result<HashMap<char, u8>, SpeechError> {
     let mut bs: Vec<u32> = (b'!' as u32..=b'~' as u32).chain(0xA1..=0xAC).chain(0xAE..=0xFF).collect();
     let mut cs = bs.clone();
     let mut n = 0;
@@ -42,7 +42,14 @@ fn unicode_to_byte() -> HashMap<char, u8> {
             n += 1;
         }
     }
-    bs.iter().zip(&cs).map(|(&b, &c)| (char::from_u32(c).expect("valid"), b as u8)).collect()
+    bs.iter()
+        .zip(&cs)
+        .map(|(&b, &c)| {
+            let character = char::from_u32(c).ok_or_else(|| SpeechError::Model("invalid byte-table character".into()))?;
+            let byte = u8::try_from(b).map_err(|e| SpeechError::Model(e.to_string()))?;
+            Ok((character, byte))
+        })
+        .collect()
 }
 
 impl Tokenizer {
@@ -50,7 +57,7 @@ impl Tokenizer {
         let bad = |m: &str| SpeechError::Model(format!("tokenizer.json: {m}"));
         let v: serde_json::Value = serde_json::from_str(json).map_err(|e| bad(&e.to_string()))?;
         let vocab = v["model"]["vocab"].as_object().ok_or_else(|| bad("no model.vocab"))?;
-        let table = unicode_to_byte();
+        let table = unicode_to_byte()?;
         let max = vocab.values().filter_map(|x| x.as_u64()).max().unwrap_or(0);
         if max > MAX_VOCAB_ID {
             return Err(bad("vocab id is too large"));

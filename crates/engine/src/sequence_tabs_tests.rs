@@ -20,7 +20,7 @@ fn three_tabs() -> (Session, [ItemId; 3]) {
 }
 
 fn view(pps: f64, scroll: f64) -> SequenceView {
-    SequenceView { pps, scroll, v_scroll: 12.0, a_scroll: 7.0, video_track_h: 90.0, audio_track_h: 40.0 }
+    SequenceView { pps, scroll, v_scroll: 12.0, a_scroll: 7.0, video_track_h: 90.0, audio_track_h: 40.0, fixed_playhead: false, playhead_anchor: 0.5 }
 }
 
 fn temp_dir(name: &str) -> std::path::PathBuf {

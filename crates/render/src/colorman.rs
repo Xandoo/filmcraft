@@ -137,6 +137,8 @@ mod tests {
                 v.hdr = hdr;
             }
             let clip = MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(g),
                 info,
                 interpret: Default::default(),

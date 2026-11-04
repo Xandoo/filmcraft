@@ -486,7 +486,11 @@ fn number(app: &mut FilmcraftApp, ui: &mut Ui, key: &str, value: f64, range: (f6
 }
 
 fn draw_field(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft, f: &Field) {
-    let enabled = f.enabled_by.is_none_or(|k| get(&d.values, k).as_bool().unwrap_or(true));
+    let fixed = get(&d.values, "timeline.fixedPlayhead").as_bool().unwrap_or(false);
+    if fixed && f.key == "timeline.autoScroll" {
+        put(&mut d.values, f.key, json!("smoothScroll"));
+    }
+    let enabled = f.enabled_by.is_none_or(|k| get(&d.values, k).as_bool().unwrap_or(true)) && !(fixed && f.key == "timeline.autoScroll");
     let cur = get(&d.values, f.key).clone();
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal(|ui| {
@@ -827,7 +831,7 @@ fn rows(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft, list: &[Row]
             break;
         }
         match r {
-            Row::Field(f) if APPEARANCE_KEYS.contains(&f.key) => continue,
+            Row::Field(f) if APPEARANCE_KEYS.contains(&f.key) || (app.project_selection_runtime.enabled && f.key == "general.atStartup") => continue,
             Row::Field(f) => draw_field(app, ui, d, f),
             Row::Group(title, inner) => group(ui, &t, title, |ui| rows(app, ui, d, inner)),
             Row::Note(text) => note(ui, &t, text),

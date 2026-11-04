@@ -439,7 +439,9 @@ fn bindable(c: &CommandSpec) -> bool {
     if !c.journal || c.id.starts_with("shortcuts.") || c.id.starts_with("prefs.") || c.id == "trim.tick" {
         return false;
     }
-    if c.shortcut.is_some() {
+    // The stream picker collects these required parameters interactively. It can be bound
+    // without reserving a new default key combination.
+    if c.shortcut.is_some() || c.id == "file.importStreams" {
         return true;
     }
     let body = c.params.trim().trim_start_matches('{').trim_end_matches('}');
@@ -572,6 +574,7 @@ impl Shortcuts {
                 out.push(Binding::new(&c.id, k, p.as_deref()));
             }
         }
+        out.push(Binding::new("edit.pasteAttributes", "Alt+V", None));
         for (c, k, p) in presets::FILMCRAFT_PANEL.iter().chain(presets::PREMIERE_PANEL) {
             if self.known(c) {
                 out.push(Binding::new(c, k, panel_opt(p)));

@@ -119,10 +119,17 @@ fn paste_attributes_dialog() {
     d.exec("timeline.select", json!({"clips": [a.id.0]}));
     d.exec("edit.copy", json!({}));
     d.exec("timeline.select", json!({"clips": [b.id.0]}));
-    assert_eq!(d.menu("edit.pasteAttributes")["dialog"], "pasteAttributes");
-    for id in
-        ["pasteAttributes.motion", "pasteAttributes.opacity", "pasteAttributes.volume", "pasteAttributes.effect.gaussian_blur", "pasteAttributes.scaleTimes"]
-    {
+    d.ok("ui.key", json!({"key":"Alt+V"}));
+    d.frames(3);
+    assert_eq!(d.app().ui.clip_dialog.as_ref().unwrap().command, "edit.pasteAttributes");
+    for id in [
+        "pasteAttributes.motion",
+        "pasteAttributes.opacity",
+        "pasteAttributes.volume",
+        "pasteAttributes.effect.gaussian_blur",
+        "pasteAttributes.scaleTimes",
+        "pasteAttributes.textMotion",
+    ] {
         assert!(d.has(id), "{id}");
     }
     // untick Opacity and the blur, then OK

@@ -45,6 +45,11 @@ impl FilmcraftApp {
         if paths.is_empty() {
             return;
         }
+        if self.project_selection_runtime.enabled && self.ui.project_selection.active {
+            self.project_selection_runtime.queued_imports = paths;
+            crate::project_selection::begin(self, "empty", false);
+            return;
+        }
         let imported = self.session.execute("file.import", json!({"paths": paths, "bin": self.import_bin().0}));
         if let Ok(v) = imported
             && let Some((pos, viewport)) = pointer

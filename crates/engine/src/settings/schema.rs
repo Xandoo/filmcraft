@@ -179,8 +179,12 @@ const ANALYSIS_CACHE: &[(&str, &str)] = &[("mediaCache", "In the Media Cache"), 
 const TRANSCRIBE_SCOPE: &[(&str, &str)] =
     &[("sequenceClips", "Auto-transcribe only clips in sequences"), ("allImported", "Auto-transcribe all imported clips")];
 
-const MODELS: &[(&str, &str)] =
-    &[("whisper-tiny", "Whisper tiny (fastest)"), ("whisper-base", "Whisper base (balanced)"), ("whisper-small", "Whisper small (most accurate)")];
+const MODELS: &[(&str, &str)] = &[
+    ("orukeet", "Orukeet (GPU recommended)"),
+    ("whisper-tiny", "Whisper tiny (fastest)"),
+    ("whisper-base", "Whisper base (balanced)"),
+    ("whisper-small", "Whisper small (accuracy)"),
+];
 
 const AUTO_SCROLL: &[(&str, &str)] = &[("noScroll", "No Scroll"), ("pageScroll", "Page Scroll"), ("smoothScroll", "Smooth Scroll")];
 
@@ -234,7 +238,7 @@ pub(super) static CATEGORIES: &[Category] = &[
                 ]),
                 true,
             ),
-            f("general.atStartup", "At Startup", Kind::Choice(STARTUP), true),
+            f("general.atStartup", "At Startup", Kind::Choice(STARTUP), false),
             f("general.whenOpeningProject", "When Opening a Project", Kind::Choice(OPENING), false),
             Row::Group(
                 "Bins",
@@ -473,6 +477,7 @@ pub(super) static CATEGORIES: &[Category] = &[
                     b("mediaAnalysis.languageAutoDetect", "Enable language auto-detection", true),
                     f("mediaAnalysis.defaultLanguage", "Default language", Kind::Choice(LANGUAGES), true),
                     f("mediaAnalysis.whisperModel", "Speech model", Kind::Choice(MODELS), true),
+                    f("mediaAnalysis.speechDevice", "Speech device", Kind::Choice(&[("auto", "Auto"), ("gpu", "GPU"), ("cpu", "CPU")]), true),
                 ],
             ),
         ],
@@ -545,6 +550,7 @@ pub(super) static CATEGORIES: &[Category] = &[
             f("timeline.videoTransitionDuration", "Video Transition Default Duration", Kind::Duration { unit_key: "timeline.videoTransitionUnit" }, true),
             f("timeline.audioTransitionDuration", "Audio Transition Default Duration", Kind::Duration { unit_key: "timeline.audioTransitionUnit" }, true),
             f("timeline.stillImageDuration", "Still Image Default Duration", Kind::Duration { unit_key: "timeline.stillImageUnit" }, true),
+            b("timeline.fixedPlayhead", "Fixed Playhead", true),
             f("timeline.autoScroll", "Timeline Playback Auto-Scrolling", Kind::Choice(AUTO_SCROLL), true),
             f("timeline.mouseScrolling", "Timeline Mouse Scrolling", Kind::Choice(MOUSE_SCROLL), true),
             Row::Group(

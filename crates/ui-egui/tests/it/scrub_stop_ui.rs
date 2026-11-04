@@ -164,18 +164,23 @@ fn a_press_on_the_ruler_while_stopped_does_not_close_the_audio_output() {
     assert!(d.harness.state().scrub.is_open(), "the open stream survived the press");
 }
 
-/// The press still stops a running transport: that is what `stop()` is for.
+/// A Timeline scrub pauses the running transport and resumes it on release.
 #[test]
-fn a_press_on_the_ruler_while_playing_stops_the_transport() {
+fn a_press_on_the_ruler_while_playing_pauses_until_release() {
     let mut d = Driver::empty_sequence();
     d.with_contents();
     d.harness.state_mut().play(1.0);
     d.until_playing();
     assert!(d.harness.state().playback.playing, "playback is still running before the press");
     let before = d.stops();
-    d.click_ruler();
-    assert!(!d.harness.state().playback.playing, "the press stopped playback");
+    let r = d.rect("timeline.ruler");
+    let pos = egui::pos2(r.min.x + 40.0, r.center().y);
+    d.send(egui::Event::PointerMoved(pos));
+    d.send(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    assert!(!d.harness.state().playback.playing, "the press paused playback");
     assert!(d.stops() > before, "the press closed the output the transport was using");
+    d.send(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    assert!(d.harness.state().playback.playing, "release resumes playback");
 }
 
 /// #2633: `transport_running()` counts the Source monitor, so the press must stop it too; the

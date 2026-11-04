@@ -203,6 +203,11 @@ pub struct TimelineView {
     pub show_audio_names: bool,
     /// Follow during playback (page scroll).
     pub follow: bool,
+    /// Keep the playhead at a movable anchor in the track area.
+    #[serde(default)]
+    pub fixed_playhead: bool,
+    #[serde(default = "center_anchor")]
+    pub playhead_anchor: f32,
     pub fit_pending: bool,
     /// The playhead the view last saw: a jump while stopped (Home, End, edit points) scrolls to it.
     #[serde(skip)]
@@ -224,6 +229,10 @@ impl TimelineView {
     }
 }
 
+fn center_anchor() -> f32 {
+    0.5
+}
+
 impl Default for TimelineView {
     fn default() -> Self {
         Self {
@@ -243,6 +252,8 @@ impl Default for TimelineView {
             show_video_names: true,
             show_audio_names: true,
             follow: true,
+            fixed_playhead: false,
+            playhead_anchor: 0.5,
             fit_pending: true,
             seen_playhead: None,
             fit_empty: None,
@@ -442,6 +453,8 @@ pub struct KeyframeRef {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default)]
+    pub project_selection: crate::project_selection::State,
+    #[serde(default)]
     pub markers_panel: crate::panels::markers_panel::State,
     #[serde(skip)]
     pub palette_manager: Option<crate::panels::palette_manager::Draft>,
@@ -503,6 +516,8 @@ pub struct UiState {
     /// Effect Controls: the selected keyframes, highlighted in the keyframe lane (a click selects one).
     #[serde(default)]
     pub keyframe_selection: Vec<KeyframeRef>,
+    #[serde(default)]
+    pub animation: crate::panels::animation::AnimationUi,
     /// Essential Sound sub-tab: "Edit" or "Browse".
     #[serde(default)]
     pub essential_sound_tab: String,
@@ -525,6 +540,8 @@ pub struct UiState {
     /// Text panel ▸ Transcript: search text.
     #[serde(default)]
     pub transcript_search: String,
+    #[serde(default)]
+    pub(crate) transcript_output: crate::panels::transcription::TextOutput,
     /// Preferences ▸ Playback: play the rendered range when a preview render finishes.
     #[serde(default = "yes")]
     pub play_after_render: bool,
@@ -991,6 +1008,7 @@ fn yes() -> bool {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            project_selection: Default::default(),
             marker_properties: None,
             markers_panel: Default::default(),
             palette_manager: None,
@@ -1021,6 +1039,7 @@ impl Default for UiState {
             failed_link: None,
             eyedropper: None,
             keyframe_selection: Vec::new(),
+            animation: Default::default(),
             essential_sound_tab: "Edit".into(),
             tts: Default::default(),
             export: Default::default(),
@@ -1028,6 +1047,7 @@ impl Default for UiState {
             caption_search: String::new(),
             transcript_sel: None,
             transcript_search: String::new(),
+            transcript_output: Default::default(),
             play_after_render: true,
             mixer_fx_open: false,
             mixer_hidden: Vec::new(),

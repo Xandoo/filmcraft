@@ -120,6 +120,8 @@ fn scene(specs: &[Spec]) -> (Project, ItemId, SourceMap) {
             &format!("layer{track}"),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(g.generator.clone()),
                 info: info.clone(),
                 interpret: Default::default(),

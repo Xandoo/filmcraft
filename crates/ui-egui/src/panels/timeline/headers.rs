@@ -177,9 +177,11 @@ pub(super) fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequ
                 continue;
             }
             app.auto.add(&format!("timeline.track.{label}.{name}"), edge, "Drag to change the track height");
-            let eresp = ui.interact(edge, egui::Id::unique(("trackh", name, r.track.0)), Sense::drag());
+            let eresp =
+                ui.interact(edge, egui::Id::unique(("trackh", name, r.track.0)), Sense::drag()).on_hover_text(tl!("Drag to resize all tracks of this type"));
             if eresp.hovered() || eresp.dragged() {
                 ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
+                p.line_segment([edge.left_center(), edge.right_center()], Stroke::new(2.0, t.accent));
             }
             if eresp.dragged() {
                 let d = eresp.drag_delta().y * if r.kind == TrackKind::Video { -1.0 } else { 1.0 };

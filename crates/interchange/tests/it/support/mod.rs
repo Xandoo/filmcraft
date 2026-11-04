@@ -44,6 +44,8 @@ pub fn media(p: &mut Project, path: &str, video: bool, audio: bool, rate: FrameR
         &name,
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::File { path: path.into() },
             info,
             interpret: Default::default(),
@@ -65,6 +67,8 @@ pub fn generator(p: &mut Project, name: &str, g: Generator) -> ItemId {
         name,
         Label::Lavender,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(g),
             info,
             interpret: Default::default(),

@@ -153,20 +153,20 @@ fn without_place_files_are_only_imported() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A pasted image is written as `Pasted Image <n>.png` next to the saved project, with the first
+/// A pasted image is written as `Pasted Images/Pasted Image <n>.png` inside the saved project, with the first
 /// number no file or project item uses.
 #[test]
-fn pasted_images_are_saved_next_to_the_project() {
+fn pasted_images_are_saved_in_a_project_subdirectory() {
     let dir = tmp_dir("paste-media-save");
     let mut s = demo();
     s.path = Some(dir.join("film.fcproj").to_string_lossy().into_owned());
     let mut png = Vec::new();
     image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 0, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
     let first = crate::paste_media::save_pasted_image(&mut s, &png).unwrap();
-    assert_eq!(Path::new(&first), dir.join("Pasted Image 1.png"));
+    assert_eq!(Path::new(&first), dir.join("Pasted Images/Pasted Image 1.png"));
     assert_eq!(std::fs::read(&first).unwrap(), png);
     let second = crate::paste_media::save_pasted_image(&mut s, &png).unwrap();
-    assert_eq!(Path::new(&second), dir.join("Pasted Image 2.png"));
+    assert_eq!(Path::new(&second), dir.join("Pasted Images/Pasted Image 2.png"));
     s.execute("edit.pasteMedia", json!({"paths": [second]})).unwrap();
     assert!(s.project.items.values().any(|i| i.name == "Pasted Image 2.png"));
     let _ = std::fs::remove_dir_all(&dir);

@@ -65,6 +65,8 @@ impl Rig {
                 &info.name.clone(),
                 Label::Iris,
                 ItemKind::Media(Box::new(MediaClip {
+                    stream: None,
+                    recording: None,
                     media: MediaRef::File { path: format!("/sig{k}.wav") },
                     info: info.clone(),
                     interpret: Default::default(),

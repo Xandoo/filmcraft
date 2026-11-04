@@ -881,3 +881,151 @@ fn keyframe_menu_clear_deletes_only_the_clicked_keyframe_of_a_selection() {
     assert_eq!((scale.len(), position), (1, 1), "2 of 3 keyframes remain: {scale:?}");
     assert!(!scale.contains(&time), "the right-clicked Scale keyframe is the one deleted");
 }
+
+#[test]
+fn workflow_animation_panels_share_selection_and_commit_full_handles_once() {
+    let (mut d, clip) = Driver::demo();
+    let (_, time) = three_keyframes_first_easing_in(&mut d, &clip);
+    d.ok("ui.panel.show", json!({"panel":"DopeSheet"}));
+    d.ok("ui.set", json!({"focused":"DopeSheet"}));
+    d.exec("window.maximizeFrame", json!({}));
+    d.frames(4);
+    d.exec("edit.selectAll", json!({}));
+    let selected = d.ok("ui.inspect", json!({}))["ui"]["keyframe_selection"].clone();
+    assert_eq!(selected.as_array().unwrap().len(), 3);
+    d.shot("workflow-dope-sheet");
+    d.exec("window.maximizeFrame", json!({}));
+    d.ok("ui.panel.show", json!({"panel":"CurveEditor"}));
+    d.ok("ui.set", json!({"focused":"CurveEditor"}));
+    d.exec("window.maximizeFrame", json!({}));
+    d.frames(4);
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["keyframe_selection"], selected);
+    let effect =
+        d.harness.state().session.active_sequence().unwrap().find_item(ClipId(clip.id)).unwrap().1.effects.iter().position(|e| e.effect == "motion").unwrap();
+    let handle = format!("curveEditor.{}.{effect}.scale.handle.{time}.0.true", clip.id);
+    let r = d.rect(&handle);
+    let from = egui::pos2((r[0] + r[2] * 0.5) as f32, (r[1] + r[3] * 0.5) as f32);
+    let undo = d.undo_len();
+    d.gesture(from, from + egui::vec2(15.0, -20.0), egui::Modifiers::NONE, None);
+    assert_eq!(d.undo_len(), undo + 1);
+    let parameter = d.parameter(&clip, "motion", "scale");
+    assert!(parameter.keyframes[0].out_tangents[0].abs() > 0.1);
+    assert_eq!(parameter.keyframes[0].in_tangents, parameter.keyframes[0].out_tangents);
+    d.shot("workflow-curve-editor");
+    d.exec("edit.undo", json!({}));
+    assert!(d.parameter(&clip, "motion", "scale").keyframes[0].out_tangents.is_empty());
+}
+
+#[test]
+fn workflow_fixed_playhead_drag_keeps_time_and_changes_anchor() {
+    let (mut d, _) = Driver::demo();
+    d.seek(0.0);
+    d.exec("timeline.fixedPlayhead", json!({"enabled":true}));
+    d.frames(4);
+    let inspect = d.ok("ui.inspect", json!({}));
+    assert_eq!(inspect["ui"]["timeline"]["fixed_playhead"], true);
+    assert!(inspect["ui"]["timeline"]["scroll"].as_f64().unwrap() < 0.0);
+    let before = d.playhead();
+    let r = d.rect("timeline.playhead.anchor");
+    let from = egui::pos2((r[0] + r[2] * 0.5) as f32, (r[1] + r[3] * 0.5) as f32);
+    d.gesture(from, from + egui::vec2(120.0, 0.0), egui::Modifiers::ALT, None);
+    assert_eq!(d.playhead(), before);
+    let anchor = d.ok("ui.inspect", json!({}))["ui"]["timeline"]["playhead_anchor"].as_f64().unwrap();
+    assert!(anchor > 0.5 && anchor <= 0.9, "{anchor}");
+    d.shot("workflow-fixed-playhead");
+    d.exec("timeline.fixedPlayhead", json!({"enabled":false}));
+    d.frames(2);
+    assert!(d.ok("ui.inspect", json!({}))["ui"]["timeline"]["scroll"].as_f64().unwrap() >= 0.0);
+}
+
+#[test]
+fn workflow_transcription_picker_exposes_models_and_devices() {
+    let (mut d, _) = Driver::demo();
+    d.ok("ui.panel.show", json!({"panel":"Text"}));
+    d.frames(3);
+    d.click("text.tab.Transcript");
+    d.ok("ui.set", json!({"focused":"Text"}));
+    d.exec("window.maximizeFrame", json!({}));
+    d.frames(3);
+    d.rect("transcription.device");
+    d.click("transcription.model");
+    for id in ["orukeet", "whisper-tiny", "whisper-base", "whisper-small"] {
+        d.rect(&format!("transcription.model.{id}"));
+    }
+    d.shot("workflow-model-picker");
+}
+
+#[test]
+fn workflow_hostile_timeline_dimensions_stay_finite() {
+    let (mut d, _) = Driver::demo();
+    d.ok("ui.set", json!({"timeline":{"videoTrackHeight":1e300,"audioTrackHeight":-1e300,"pps":1e300}}));
+    d.frames(3);
+    let v = d.ok("ui.inspect", json!({}))["ui"]["timeline"].clone();
+    assert_eq!(v["video_track_h"], 600.0);
+    assert_eq!(v["audio_track_h"], 8.0);
+    assert!(v["target_pps"].as_f64().unwrap() <= 24000.0);
+}
+
+#[test]
+fn workflow_cut_shortcut_respects_text_focus_and_retains_the_active_tool() {
+    let (mut d, _) = Driver::demo();
+    d.seek(1.0);
+    let count = |d: &Driver| d.harness.state().session.active_sequence().unwrap().video_tracks[0].items.len();
+    let before = count(&d);
+    d.ok("ui.set", json!({"focused":"Project"}));
+    d.exec("panel.selectFindBox", json!({}));
+    d.frames(2);
+    assert!(d.harness.ctx.text_edit_focused());
+    d.ok("ui.key", json!({"key":"Shift+C"}));
+    d.frames(2);
+    assert_eq!(count(&d), before);
+    d.ok("ui.key", json!({"key":"Escape"}));
+    d.ok("ui.set", json!({"focused":"Timeline"}));
+    d.exec("tool.selection", json!({}));
+    let tool = d.ok("ui.inspect", json!({}))["ui"]["tool"].clone();
+    d.ok("ui.key", json!({"key":"Shift+C"}));
+    d.frames(2);
+    assert_eq!(count(&d), before + 1);
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["tool"], tool);
+}
+
+#[test]
+fn fixed_ruler_drag_moves_time_without_moving_anchor_or_jumping_on_press() {
+    let (mut d, _) = Driver::demo();
+    d.seek(5.0);
+    assert!(d.find("timeline.toggle.fixedPlayhead").is_none());
+    d.exec("timeline.fixedPlayhead", json!({"enabled":true}));
+    d.frames(4);
+    let before = d.playhead();
+    let view = d.ok("ui.inspect", json!({}))["ui"]["timeline"].clone();
+    let r = d.rect("timeline.playhead.anchor");
+    let from = egui::pos2((r[0] + r[2] * 0.5 + 100.0) as f32, (r[1] + r[3] * 0.5) as f32);
+    d.gesture(from, from, egui::Modifiers::NONE, None);
+    assert_eq!(d.playhead(), before, "pressing the ruler must not seek");
+    d.gesture(from, from - egui::vec2(60.0, 0.0), egui::Modifiers::NONE, None);
+    assert!(d.playhead() > before, "dragging left advances time");
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["timeline"]["playhead_anchor"], view["playhead_anchor"]);
+}
+
+#[test]
+fn animation_panels_expose_zoom_and_scroll_controls() {
+    let (mut d, clip) = Driver::demo();
+    three_keyframes_first_easing_in(&mut d, &clip);
+    for panel in ["CurveEditor", "DopeSheet"] {
+        d.ok("ui.panel.show", json!({"panel":panel}));
+        d.ok("ui.set", json!({"focused":panel}));
+        d.exec("window.maximizeFrame", json!({}));
+        d.frames(3);
+        let id = if panel == "CurveEditor" { "curveEditor" } else { "dopeSheet" };
+        d.rect(&format!("{id}.zoom"));
+        d.rect(&format!("{id}.heightZoom"));
+        d.rect(&format!("{id}.scroll"));
+        let before = d.ok("ui.inspect", json!({}))["ui"]["animation"]["pps"].as_f64().unwrap();
+        d.click(&format!("{id}.zoomIn"));
+        let after = d.ok("ui.inspect", json!({}))["ui"]["animation"]["pps"].as_f64().unwrap();
+        assert!(after > before);
+        d.click(&format!("{id}.zoomOut"));
+        d.shot(&format!("{id}-zoom-controls"));
+        d.exec("window.maximizeFrame", json!({}));
+    }
+}

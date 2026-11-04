@@ -26,6 +26,8 @@ use crate::{EngineError, Result, Session};
 type Run = fn(&mut Session, &Value) -> Result<Value>;
 type Enabled = fn(&Session) -> std::result::Result<(), String>;
 
+pub use crate::transcript_tracks::TextTrackOptions;
+
 fn spec(id: &'static str, label: &'static str, menu: &'static [&'static str], params: &'static str, enabled: Enabled, run: Run, journal: bool) -> CommandSpec {
     CommandSpec { id, label, menu, shortcut: None, params, enabled, run, journal }
 }
@@ -85,10 +87,20 @@ fn ids_p(p: &Value, k: &str) -> Option<Vec<ItemId>> {
     p.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(ItemId).collect())
 }
 
-/// Items to transcribe: `items` / `item`, else the Project panel selection, else the media of the
+/// Items to transcribe: `items` / `item`, else selected timeline audio clips, else the Project panel selection, else the media of the
 /// active sequence's enabled audio clips. Subclips resolve to their media; duplicates are removed.
-fn targets(s: &Session, p: &Value) -> Vec<ItemId> {
+pub(crate) fn targets(s: &Session, p: &Value) -> Vec<ItemId> {
     let mut raw = ids_p(p, "items").or_else(|| u64_p(p, "item").map(|i| vec![ItemId(i)])).unwrap_or_default();
+    if raw.is_empty()
+        && !s.state.selection.is_empty()
+        && let Some(q) = s.active_sequence()
+    {
+        // A linked video selection must not pull unrelated tracks into transcription.
+        raw = q.audio_tracks.iter().flat_map(|t| &t.items).filter(|it| it.enabled && s.state.selection.contains(&it.id)).map(|it| it.item).collect();
+        if raw.is_empty() {
+            return Vec::new();
+        }
+    }
     if raw.is_empty() {
         raw = s.state.project_selection.clone();
     }
@@ -146,6 +158,36 @@ fn transcriber(s: &Session, p: &Value) -> Result<Arc<dyn Transcriber>> {
 }
 
 fn generate(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("textTrack").is_some() || p.get("clips").is_some() || (p.get("items").is_none() && p.get("item").is_none() && !s.state.selection.is_empty()) {
+        let mut params = if p.is_null() {
+            json!({})
+        } else if p.is_object() {
+            p.clone()
+        } else {
+            return Err(bad("transcript.generate", "parameters must be an object"));
+        };
+        params["wait"] = json!(true);
+        let result = crate::transcript_jobs::start(s, &params)?;
+        let id = result.get("job").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("transcription job identity is missing".into()))?;
+        let job = s.jobs.iter().find(|j| j.id == id).ok_or_else(|| EngineError::Other("transcription job is missing".into()))?;
+        if let Some(Err(e)) = job.result.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+            return Err(EngineError::Other(e.clone()));
+        }
+        let report: Vec<_> = result
+            .get("items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .filter_map(|id| {
+                s.project
+                    .transcripts
+                    .get(&ItemId(id))
+                    .map(|t| json!({"item":id,"words":t.words.len(),"speakers":t.speakers.len(),"language":t.language,"source":t.source}))
+            })
+            .collect();
+        return Ok(json!({"items":report,"skipped":[]}));
+    }
     let items = targets(s, p);
     if items.is_empty() {
         return Err(bad("transcript.generate", "nothing to transcribe (pass `items`, select clips, or open a sequence with audio)"));
@@ -203,19 +245,13 @@ pub(crate) fn auto_transcribe_sequence_clips(s: &mut Session, before: &Project) 
     let items: BTreeSet<_> = audio_placements(&s.project)
         .filter(|placement| !old.contains(placement))
         .filter_map(|(_, _, item)| s.project.resolve_media(item))
-        .filter(|(root, media, _)| media.info.has_audio() && !s.project.transcripts.contains_key(root))
+        .filter(|(root, media, _)| media.info.has_audio() && !s.project.transcripts.contains_key(root) && !crate::transcript_jobs::queued(s, *root))
         .map(|(root, _, _)| root.0)
         .collect();
     if items.is_empty() {
         return Ok(());
     }
-    // Fold the transcript into the placement's undo step. Preserve the whole history, including
-    // its bounded oldest entry and merge key; generate's own edit must not consume another slot.
-    let history = s.history.clone();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| generate(s, &json!({"items": items}))))
-        .unwrap_or_else(|_| Err(EngineError::Other("internal error during automatic transcription (see the crash log); the clips were placed".into())));
-    s.history = history;
-    result.map(|_| ())
+    crate::transcript_jobs::start(s, &json!({"items":items,"automatic":true})).map(|_| ())
 }
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
@@ -440,13 +476,15 @@ fn models(_: &mut Session, _: &Value) -> Result<Value> {
         "models": filmcraft_speech::models::catalogue().iter().map(|m| json!({
             "id": m.id, "name": m.name, "multilingual": m.multilingual, "description": m.description,
             "license": m.license, "source": m.source, "size": m.size(),
+            "licenseUrl":m.license_url,"author":m.author,"backend":m.backend(),
+            "languages":m.language_codes(),"estimatedMemoryBytes":m.estimated_memory_bytes(),
             "installed": dir.as_ref().is_some_and(|d| filmcraft_speech::models::installed(d, m)),
         })).collect::<Vec<_>>(),
     }))
 }
 
-/// Download a catalogue model into `<data dir>/models` (feature `speech-download`). Hosts show
-/// the size, source and licence (`transcript.models`) and ask before running this.
+/// Download a catalogue model into `<data dir>/models` (feature `speech-download`).
+/// `transcript.start` performs this automatically when the requested model is missing.
 fn download_model(_: &mut Session, p: &Value) -> Result<Value> {
     let id = str_p(p, "model").unwrap_or(filmcraft_speech::models::DEFAULT_MODEL);
     let m = filmcraft_speech::models::find(id).ok_or_else(|| speech_err(SpeechError::UnknownModel(id.into())))?;
@@ -466,10 +504,28 @@ fn download_model(_: &mut Session, p: &Value) -> Result<Value> {
 pub fn commands() -> Vec<CommandSpec> {
     vec![
         spec(
+            "transcript.createText",
+            "Create Text Clips…",
+            &["Sequence", "Transcript"],
+            r#"{"grouping":"characters|words"="characters","maxChars":1..4096=32,"maxWords":1..256=1,"maxSeconds":0.1..60=7,"pauseSeconds":0..60=0.8,"breakSentences":bool=true,"fontSize":1..1000=72,"name":str="Transcript Text"}"#,
+            has_transcript,
+            crate::transcript_tracks::create,
+            true,
+        ),
+        spec(
+            "transcript.start",
+            "Transcribe in Background",
+            &[],
+            r#"{"clips":[clipId]?,"items":[id]?,"model":str?,"device":"auto|gpu|cpu"?,"language":str?,"diarize":bool?,"maxSpeakers":1..32?,"automatic":bool?,"wait":bool?,"textTrack":TextTrackOptions? (same settings as transcript.createText)}"#,
+            can_transcribe,
+            crate::transcript_jobs::start,
+            true,
+        ),
+        spec(
             "transcript.generate",
             "Transcribe…",
             &["Sequence", "Transcript"],
-            r#"{"items":[id]?,"model":"whisper-base"?,"language":"en|auto"?,"diarize":bool?,"maxSpeakers":n?}"#,
+            r#"{"clips":[clipId]?,"items":[id]?,"model":str?,"device":"auto|gpu|cpu"?,"language":"en|auto"?,"diarize":bool?,"maxSpeakers":n?,"textTrack":TextTrackOptions?}"#,
             can_transcribe,
             generate,
             true,

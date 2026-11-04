@@ -27,12 +27,70 @@ fn tmp_dir(name: &str) -> PathBuf {
     d
 }
 
+#[test]
+fn recording_stream_picker_is_opt_in_and_agent_drivable() {
+    let path = match std::env::var("FILMCRAFT_OBS_SAMPLE") {
+        Ok(path) => PathBuf::from(path),
+        Err(_) => {
+            let path = tmp_dir("stream-picker").join("source.mov");
+            make_movie(&path, DemoScene::OceanSunset, 64, 48, 12);
+            path
+        }
+    };
+    let mut d = Driver::new(Session::default());
+    let before = d.app().session.project.to_json();
+    let open = |d: &mut Driver| d.ok("ui.menu.invoke", json!({"id":"file.importStreams","params":{"path":path}}));
+    assert_eq!(open(&mut d)["dialog"], "importStreams");
+    let count = d.app().ui.clip_dialog.as_ref().unwrap().params["streams"].as_array().unwrap().len();
+    assert!(count > 0);
+    assert_eq!(d.ids("importStreams.stream.").len(), count);
+    d.snapshot("recording-stream-picker");
+    d.click("importStreams.stream.0");
+    assert_eq!(d.app().ui.clip_dialog.as_ref().unwrap().params["streams"].as_array().unwrap().len(), count - 1);
+    d.click("importStreams.cancel");
+    assert!(d.app().ui.clip_dialog.is_none());
+    assert_eq!(d.app().session.project.to_json(), before);
+    open(&mut d);
+    d.app().ui.clip_dialog.as_mut().unwrap().params = json!(42);
+    d.frames(2);
+    assert!(d.app().ui.clip_dialog.as_ref().unwrap().error.contains("Invalid"));
+    d.click("importStreams.cancel");
+    open(&mut d);
+    d.click("importStreams.stream.0");
+    if count == 1 {
+        d.click("importStreams.ok");
+        assert!(d.app().ui.clip_dialog.as_ref().unwrap().error.contains("select"));
+        d.click("importStreams.stream.0");
+    }
+    d.click("importStreams.ok");
+    assert!(d.app().ui.clip_dialog.is_none(), "{}", d.app().ui.status);
+    let q = d.app().session.active_sequence().unwrap();
+    assert_eq!(q.video_tracks.iter().chain(&q.audio_tracks).map(|t| t.items.len()).sum::<usize>(), if count == 1 { 1 } else { count - 1 });
+    d.exec("playhead.set", json!({"seconds":0.25}));
+    let frame = d.app().session.sequence_rate().frame_at(d.app().session.playhead());
+    let revision = d.app().session.revision;
+    let began = std::time::Instant::now();
+    loop {
+        d.frames(1);
+        if d.app().program_picture().is_some_and(|k| k.frame == frame && k.revision == revision) {
+            break;
+        }
+        assert!(began.elapsed().as_secs() < 30, "selected-stream monitor frame did not arrive");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    d.snapshot("recording-stream-timeline");
+    d.exec("edit.undo", json!({}));
+    assert_eq!(d.app().session.project.to_json(), before);
+}
+
 /// A 24 fps ProRes movie of a demo scene (our own encoder).
 fn make_movie(path: &Path, scene: DemoScene, w: u32, h: u32, frames: i64) {
     let rate = FrameRate::FPS_24;
     let dur = rate.tick_of(frames);
     let src = GeneratorSource::new(Generator::Demo(scene), w, h, rate, dur);
     let clip = MediaClip {
+        stream: None,
+        recording: None,
         media: MediaRef::Generator(Generator::Demo(scene)),
         info: src.info().clone(),
         interpret: Default::default(),
@@ -191,6 +249,8 @@ fn source_transport_steps_every_frame_at_a_fractional_tick_rate() {
         "31 fps source",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(generator),
             info: src.info().clone(),
             interpret: Default::default(),
@@ -234,6 +294,8 @@ fn source_menu_steps_use_ordinals_for_explicit_targets_and_focus() {
             "31 fps menu source",
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(generator),
                 info: src.info().clone(),
                 interpret: Default::default(),
@@ -310,6 +372,8 @@ fn zero_tick_frame_duration_source() -> (Driver, Tick) {
         "Source with less than one tick per frame",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(generator),
             info: src.info().clone(),
             interpret: Default::default(),

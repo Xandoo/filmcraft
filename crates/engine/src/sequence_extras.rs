@@ -56,7 +56,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "Transcribe Sequence…",
             &["Sequence"],
             None,
-            r#"{"track":"mix"|"A1"|id?,"language":"en|auto"?,"diarize":bool?,"maxSpeakers":n?,"model":str?}"#,
+            r#"{"track":"mix"|"A1"|id?,"language":"en|auto"?,"diarize":bool?,"maxSpeakers":n?,"model":str?,"device":"auto|gpu|cpu"?,"background":bool?,"wait":bool?,"textTrack":TextTrackOptions?}"#,
             can_transcribe_sequence,
             transcribe,
         ),
@@ -273,24 +273,25 @@ fn transcribe(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::String(t)) if t.eq_ignore_ascii_case("mix") => None,
         Some(_) => Some(crate::commands::track_p(s, p, "track", "sequence.transcribe")?.ok_or_else(|| bad("sequence.transcribe", "unknown `track`"))?),
     };
-    let mut items = Vec::new();
-    for t in q.audio_tracks.iter().filter(|t| track.is_none_or(|x| x == t.id)) {
-        for it in t.items.iter().filter(|i| i.enabled) {
-            if !items.contains(&it.item.0) {
-                items.push(it.item.0);
-            }
-        }
+    let selected = q.audio_tracks.iter().flat_map(|t| &t.items).any(|it| it.enabled && s.state.selection.contains(&it.id));
+    let clips: Vec<_> = q
+        .audio_tracks
+        .iter()
+        .filter(|t| track.is_none_or(|x| x == t.id))
+        .flat_map(|t| &t.items)
+        .filter(|it| it.enabled && (!selected || s.state.selection.contains(&it.id)))
+        .map(|it| it.id.0)
+        .collect();
+    if clips.is_empty() {
+        return Err(EngineError::Other("there are no selected audio clips on this track to transcribe".into()));
     }
-    if items.is_empty() {
-        return Err(EngineError::Other("there are no audio clips to transcribe".into()));
-    }
-    let mut params = json!({"items": items});
-    for k in ["language", "diarize", "maxSpeakers", "model"] {
+    let mut params = json!({"clips":clips});
+    for k in ["language", "diarize", "maxSpeakers", "model", "device", "wait", "textTrack"] {
         if let Some(v) = p.get(k) {
             params[k] = v.clone();
         }
     }
-    s.execute("transcript.generate", params)
+    s.execute(if p.get("background").and_then(Value::as_bool) == Some(true) { "transcript.start" } else { "transcript.generate" }, params)
 }
 
 // ---------------------------------------------------------------------------------------------

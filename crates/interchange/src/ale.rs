@@ -244,6 +244,8 @@ mod tests {
             file_size: None,
         };
         let clip = MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::File { path: format!("/media/{name}") },
             info,
             interpret: Default::default(),

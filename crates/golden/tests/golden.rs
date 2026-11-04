@@ -56,6 +56,8 @@ impl Builder {
             &info.name.clone(),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(src.generator.clone()),
                 info,
                 interpret: Default::default(),

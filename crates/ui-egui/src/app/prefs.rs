@@ -60,6 +60,14 @@ impl FilmcraftApp {
     /// Make the UI follow the settings after they change (theme, tooltips, frame cache budget,
     /// play after rendering, audio device).
     pub fn apply_prefs(&mut self, ctx: &egui::Context) {
+        let fixed = self.session.prefs.timeline.fixed_playhead;
+        if self.ui.timeline.fixed_playhead != fixed {
+            self.ui.timeline.fixed_playhead = fixed;
+            if !fixed {
+                self.ui.timeline.scroll = self.ui.timeline.scroll.max(0.0);
+                self.ui.timeline.target_scroll = self.ui.timeline.target_scroll.max(0.0);
+            }
+        }
         self.apply_ui_scale(ctx);
         // Appearance Mode ▸ Sync with system: follow the system while running. The host reports
         // changes as they happen (no polling) and wakes the UI only when the value changes.
@@ -162,10 +170,13 @@ impl FilmcraftApp {
             a_scroll: v.a_scroll,
             video_track_h: v.video_track_h,
             audio_track_h: v.audio_track_h,
+            fixed_playhead: v.fixed_playhead,
+            playhead_anchor: v.playhead_anchor,
         };
         let show = |v: &mut state::TimelineView, s: filmcraft_engine::project::SequenceView| {
             (v.pps, v.target_pps, v.scroll, v.target_scroll) = (s.pps, s.pps, s.scroll, s.scroll);
             (v.v_scroll, v.a_scroll, v.video_track_h, v.audio_track_h) = (s.v_scroll, s.a_scroll, s.video_track_h, s.audio_track_h);
+            v.playhead_anchor = s.playhead_anchor;
             (v.fit_pending, v.fit_empty) = (false, None);
         };
         if self.timeline_view_of != Some(active) {
@@ -178,6 +189,7 @@ impl FilmcraftApp {
                 None => {
                     let d = state::TimelineView::default();
                     (v.v_scroll, v.a_scroll, v.video_track_h, v.audio_track_h) = (0.0, 0.0, d.video_track_h, d.audio_track_h);
+                    v.playhead_anchor = 0.5;
                     (v.fit_pending, v.fit_empty) = (true, None);
                     self.timeline_view_last = None;
                 }

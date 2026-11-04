@@ -152,6 +152,25 @@ pub struct Keyframe {
     pub out_influence: f64,
     #[serde(default = "default_influence")]
     pub in_influence: f64,
+    /// Optional component slopes in value units per source second. Absent preserves legacy easing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", deserialize_with = "read_tangents")]
+    pub in_tangents: Vec<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty", deserialize_with = "read_tangents")]
+    pub out_tangents: Vec<f64>,
+    #[serde(default = "linked_tangents")]
+    pub tangents_linked: bool,
+}
+
+fn linked_tangents() -> bool {
+    true
+}
+
+fn read_tangents<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<f64>, D::Error> {
+    let values = Vec::<f64>::deserialize(d)?;
+    if values.len() > 4 || values.iter().any(|v| !v.is_finite() || v.abs() > 1e12) {
+        return Err(serde::de::Error::custom("keyframe tangents must contain at most four finite slopes within ±1e12"));
+    }
+    Ok(values)
 }
 
 fn default_influence() -> f64 {
@@ -160,7 +179,16 @@ fn default_influence() -> f64 {
 
 impl Keyframe {
     pub fn new(time: Tick, value: ParamValue) -> Self {
-        Self { time, value, interp: Interpolation::Linear, out_influence: default_influence(), in_influence: default_influence() }
+        Self {
+            time,
+            value,
+            interp: Interpolation::Linear,
+            out_influence: default_influence(),
+            in_influence: default_influence(),
+            in_tangents: Vec::new(),
+            out_tangents: Vec::new(),
+            tangents_linked: true,
+        }
     }
 }
 
@@ -277,7 +305,12 @@ impl Param {
             // e.g. mask paths with different vertex counts: hold
             return a.value.clone();
         }
-        let c: Vec<f64> = ca.iter().zip(&cb).map(|(x, y)| x + (y - x) * e).collect();
+        let c: Vec<f64> = ca
+            .iter()
+            .zip(&cb)
+            .enumerate()
+            .map(|(component, (x, y))| component_at(a, b, (self.tangent_at(i, component, true), self.tangent_at(i + 1, component, false)), *x, *y, u, e))
+            .collect();
         ParamValue::from_components(&a.value, &c)
     }
 
@@ -342,7 +375,35 @@ impl Param {
             return va;
         }
         let u = (t - a.time).0 as f64 / (b.time - a.time).0 as f64;
-        va + (vb - va) * ease(a, b, u)
+        component_at(a, b, (self.tangent_at(i, 0, true), self.tangent_at(i + 1, 0, false)), va, vb, u, ease(a, b, u))
+    }
+
+    /// Current component slope. New Auto Bézier keys follow neighboring values and times;
+    /// legacy keys without tangent fields retain their original temporal easing exactly.
+    pub fn tangent_at(&self, index: usize, component: usize, outgoing: bool) -> Option<f64> {
+        let key = self.keyframes.get(index)?;
+        let stored = if outgoing { &key.out_tangents } else { &key.in_tangents }.get(component).copied().filter(|v| v.is_finite())?;
+        if key.interp != Interpolation::AutoBezier {
+            return Some(stored);
+        }
+        let a = self.keyframes.get(index.saturating_sub(1))?;
+        let b = self.keyframes.get(index.saturating_add(1)).unwrap_or(key);
+        let seconds = (b.time - a.time).seconds();
+        if seconds <= 0.0 || !seconds.is_finite() {
+            return Some(stored);
+        }
+        let value = |v: &ParamValue| match v {
+            ParamValue::Float(v) if component == 0 => Some(*v),
+            ParamValue::Vec2(v) => match component {
+                0 => Some(v.x),
+                1 => Some(v.y),
+                _ => None,
+            },
+            ParamValue::Color(v) => v.get(component).map(|v| *v as f64),
+            _ => None,
+        };
+        let slope = (value(&b.value)? - value(&a.value)?) / seconds;
+        if slope.is_finite() { Some(slope.clamp(-1e12, 1e12)) } else { Some(stored) }
     }
 
     pub fn vec2_at(&self, t: Tick) -> Vec2 {
@@ -359,6 +420,27 @@ impl Param {
 }
 
 /// Temporal easing for u∈[0,1] between two keyframes (1D cubic Bezier in time/value space).
+fn component_at(a: &Keyframe, b: &Keyframe, slopes: (Option<f64>, Option<f64>), va: f64, vb: f64, u: f64, legacy: f64) -> f64 {
+    let outgoing = slopes.0.filter(|v| v.is_finite() && !matches!(a.interp, Interpolation::Linear | Interpolation::Hold | Interpolation::EaseIn));
+    let incoming = slopes.1.filter(|v| v.is_finite() && !matches!(b.interp, Interpolation::Linear | Interpolation::Hold | Interpolation::EaseOut));
+    if outgoing.is_none() && incoming.is_none() {
+        return va + (vb - va) * legacy;
+    }
+    let seconds = (b.time - a.time).seconds();
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return va;
+    }
+    let x1 = if a.out_influence.is_finite() { a.out_influence.clamp(0.01, 1.0) } else { default_influence() };
+    let x2 = 1.0 - if b.in_influence.is_finite() { b.in_influence.clamp(0.01, 1.0) } else { default_influence() };
+    let secant = (vb - va) / seconds;
+    let c1 = va + outgoing.unwrap_or(secant) * seconds * x1;
+    let c2 = vb - incoming.unwrap_or(secant) * seconds * (1.0 - x2);
+    let s = cubic_bezier_y_for_x(x1, 1.0 / 3.0, x2, 2.0 / 3.0, u);
+    let r = 1.0 - s;
+    let value = r * r * r * va + 3.0 * r * r * s * c1 + 3.0 * r * s * s * c2 + s * s * s * vb;
+    if value.is_finite() { value } else { va + (vb - va) * legacy }
+}
+
 fn ease(a: &Keyframe, b: &Keyframe, u: f64) -> f64 {
     let out_ease = matches!(a.interp, Interpolation::Bezier | Interpolation::AutoBezier | Interpolation::ContinuousBezier | Interpolation::EaseOut);
     let in_ease = matches!(b.interp, Interpolation::Bezier | Interpolation::AutoBezier | Interpolation::ContinuousBezier | Interpolation::EaseIn)
@@ -404,6 +486,59 @@ pub fn cubic_bezier_y_for_x(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_tangents_follow_neighbor_edits_and_match_audio_evaluation() {
+        let mut p = Param::new(ParamValue::Float(0.0));
+        for (second, value) in [(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)] {
+            let mut key = Keyframe::new(Tick::from_seconds_f64(second), ParamValue::Float(value));
+            key.interp = Interpolation::AutoBezier;
+            key.in_tangents = vec![1.0];
+            key.out_tangents = vec![1.0];
+            p.keyframes.push(key);
+        }
+        assert_eq!(p.tangent_at(1, 0, true), Some(1.0));
+        p.keyframes[2].value = ParamValue::Float(4.0);
+        assert_eq!(p.tangent_at(1, 0, true), Some(2.0));
+        assert_eq!(p.tangent_at(1, 0, false), Some(2.0));
+        for step in 0..=200 {
+            let time = Tick::from_seconds_f64(step as f64 * 0.01);
+            assert_eq!(p.scalar_at(time), p.f64_at(time));
+        }
+        p.keyframes[1].in_tangents.clear();
+        p.keyframes[1].out_tangents.clear();
+        assert_eq!(p.tangent_at(1, 0, true), None, "legacy Auto Bézier stays on its original evaluator");
+    }
+
+    #[test]
+    fn component_tangents_support_equal_endpoints_and_audio_matches_values() {
+        let mut p = Param::new(ParamValue::Float(0.0));
+        p.put_keyframe(Tick::ZERO, ParamValue::Float(0.0));
+        p.put_keyframe(Tick::from_seconds_f64(1.0), ParamValue::Float(0.0));
+        p.keyframes[0].interp = Interpolation::Bezier;
+        p.keyframes[1].interp = Interpolation::Bezier;
+        p.keyframes[0].out_tangents = vec![6.0];
+        p.keyframes[1].in_tangents = vec![-6.0];
+        assert!((p.f64_at(Tick::from_seconds_f64(0.5)) - 1.5).abs() < 1e-6);
+        for i in 0..101 {
+            let t = Tick::from_seconds_f64(i as f64 / 100.0);
+            assert!((p.scalar_at(t) - p.f64_at(t)).abs() < 1e-10);
+        }
+        let back: Param = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn legacy_curves_and_invalid_tangents() {
+        let old = serde_json::json!({"time":0,"value":{"Float":2.0},"interp":"Bezier","in_influence":0.3,"out_influence":0.4});
+        let k: Keyframe = serde_json::from_value(old.clone()).unwrap();
+        assert!(k.in_tangents.is_empty() && k.out_tangents.is_empty());
+        for bad in [serde_json::json!([1, 2, 3, 4, 5]), serde_json::json!([1e20]), serde_json::json!([null])] {
+            let mut v = old.clone();
+            v["in_tangents"] = bad;
+            assert!(serde_json::from_value::<Keyframe>(v).is_err());
+        }
+    }
 
     #[test]
     fn linear_and_hold() {

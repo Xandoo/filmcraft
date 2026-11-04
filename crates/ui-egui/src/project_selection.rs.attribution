@@ -1,0 +1,8 @@
+asset:        project_selection.rs
+title:        Procedural project thumbnail placeholder
+author:       FilmCraft contributors
+source:       original work
+license:      MIT OR Apache-2.0
+license-file: ../../../LICENSE-MIT
+added:        2026-11-03 by Codex
+notes:        Original code-drawn frame and generic play triangle; no reference artwork.

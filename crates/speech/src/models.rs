@@ -1,13 +1,14 @@
 //! The speech model catalogue and the model store.
 //!
-//! Models are downloaded on first use, after the user confirms (the dialog shows the size, the
-//! source URL and the licence), into `<data dir>/models/<id>/`. They are never bundled with
+//! Models are downloaded on first use after choosing Transcribe (the picker shows size, source
+//! and licence), into `<data dir>/models/<id>/`. They are never bundled with
 //! FilmCraft or committed to the repository. Every file is pinned to a Hugging Face revision of
-//! OpenAI's own repositories and checked against its SHA-256 before it is used.
+//! the publishers' repositories and checked against its SHA-256 before it is used.
 //!
 //! Licence: OpenAI released the Whisper code and model weights under the MIT licence
 //! (<https://github.com/openai/whisper/blob/main/LICENSE>); the safetensors conversions OpenAI
 //! publishes at `huggingface.co/openai/whisper-*` are labelled Apache-2.0. Both are permissive.
+//! Orukeet's published weights are CC BY-SA 4.0; its model card supplies attribution and provenance.
 
 use std::path::{Path, PathBuf};
 
@@ -43,7 +44,20 @@ impl ModelInfo {
     pub fn size(&self) -> u64 {
         self.files.iter().map(|f| f.size).sum()
     }
+    pub fn backend(&self) -> &'static str {
+        if self.id == "orukeet" { "fastconformer-tdt" } else { "whisper" }
+    }
+    pub fn language_codes(&self) -> Option<&'static [&'static str]> {
+        if self.id == "orukeet" { Some(ORUKEET_LANGUAGES) } else { None }
+    }
+    /// Conservative combined weight/working-buffer estimate, not a measured VRAM requirement.
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        self.size().saturating_mul(4)
+    }
 }
+
+pub const ORUKEET_LANGUAGES: &[&str] =
+    &["bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "ru", "sk", "sl", "es", "sv", "uk"];
 
 const LICENSE: &str = "MIT (OpenAI Whisper weights); Hugging Face conversion: Apache-2.0";
 const LICENSE_URL: &str = "https://github.com/openai/whisper/blob/main/LICENSE";
@@ -59,10 +73,46 @@ const TOKENIZER_MULTI: &str = "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec
 
 static CATALOGUE: &[ModelInfo] = &[
     ModelInfo {
+        id: "orukeet",
+        name: "Orukeet",
+        multilingual: true,
+        description: "627 M parameters. Accuracy-focused multilingual recognition; GPU recommended. Supports 25 European languages.",
+        license: "CC-BY-SA-4.0",
+        license_url: "https://huggingface.co/oruk/orukeet#license-and-attribution",
+        author: "Oruk AI and contributors",
+        source: "https://huggingface.co/oruk/orukeet",
+        files: &[
+            ModelFile {
+                name: "config.json",
+                url: "https://huggingface.co/oruk/orukeet/resolve/b59c13a733fce5cf193230d0fa317ee7f145a108/config.json",
+                sha256: "a0075728c5f206b298006343ffa01db0016230832f1e4022f541887d3d27ac32",
+                size: 1149,
+            },
+            ModelFile {
+                name: "processor_config.json",
+                url: "https://huggingface.co/oruk/orukeet/resolve/b59c13a733fce5cf193230d0fa317ee7f145a108/processor_config.json",
+                sha256: "7d1787398cffb800fa2cb58750781a78fe668dc02469750ee290840bd54cd8f1",
+                size: 417,
+            },
+            ModelFile {
+                name: "tokenizer.json",
+                url: "https://huggingface.co/oruk/orukeet/resolve/b59c13a733fce5cf193230d0fa317ee7f145a108/tokenizer.json",
+                sha256: "45a7f44c5e012cfd09e72b333274370ba7785740d27fb1486364e0bb7bbf8b1a",
+                size: 1159960,
+            },
+            ModelFile {
+                name: "model.safetensors",
+                url: "https://huggingface.co/oruk/orukeet/resolve/b59c13a733fce5cf193230d0fa317ee7f145a108/model.safetensors",
+                sha256: "092cff73445117d4d234c5e4fb37d86ad16a348be3426e10ff38c79d35758569",
+                size: 2508311120,
+            },
+        ],
+    },
+    ModelInfo {
         id: "whisper-tiny",
         name: "Whisper tiny (multilingual)",
         multilingual: true,
-        description: "39 M parameters. Fastest; fine for clear speech, rough on noisy audio.",
+        description: "39 M parameters. Lowest memory use; fast on CPU for clear speech, less robust on noisy audio.",
         license: LICENSE,
         license_url: LICENSE_URL,
         author: AUTHOR,
@@ -102,7 +152,7 @@ static CATALOGUE: &[ModelInfo] = &[
         id: "whisper-base",
         name: "Whisper base (multilingual)",
         multilingual: true,
-        description: "74 M parameters. The default: a good balance of speed and accuracy.",
+        description: "74 M parameters. Balances resource use and recognition quality, with broad language coverage.",
         license: LICENSE,
         license_url: LICENSE_URL,
         author: AUTHOR,
@@ -142,7 +192,7 @@ static CATALOGUE: &[ModelInfo] = &[
         id: "whisper-small",
         name: "Whisper small (multilingual)",
         multilingual: true,
-        description: "244 M parameters. Most accurate here; about 4× slower than base.",
+        description: "244 M parameters. A more capable Whisper model for difficult audio, with higher memory and compute costs.",
         license: LICENSE,
         license_url: LICENSE_URL,
         author: AUTHOR,
@@ -181,7 +231,7 @@ static CATALOGUE: &[ModelInfo] = &[
 ];
 
 /// The default model.
-pub const DEFAULT_MODEL: &str = "whisper-base";
+pub const DEFAULT_MODEL: &str = "orukeet";
 
 pub fn catalogue() -> &'static [ModelInfo] {
     CATALOGUE
@@ -210,7 +260,7 @@ fn valid_file(path: &Path, file: &ModelFile) -> bool {
     }
     let Ok(mut input) = std::fs::File::open(path) else { return false };
     let mut hasher = sha2::Sha256::new();
-    if std::io::copy(&mut input, &mut hasher).is_err() {
+    if std::io::copy(&mut std::io::Read::take(&mut input, file.size.saturating_add(1)), &mut hasher).is_err() {
         return false;
     }
     format!("{:x}", hasher.finalize()).eq_ignore_ascii_case(file.sha256)
@@ -237,7 +287,7 @@ pub fn shared_tokenizer_sha() -> &'static str {
 #[cfg(feature = "download")]
 pub type DownloadProgress<'a> = &'a mut dyn FnMut(u64, u64, &str) -> bool;
 
-/// Download the missing files of `m` into `models_dir/<id>/`: each file streams into `<name>.part`,
+/// Download the missing files of `m` into `models_dir/<id>/`: each file streams into a unique temporary file,
 /// its SHA-256 is checked, then it is renamed into place. A wrong checksum deletes the part file
 /// and fails. Pure Rust TLS (rustls + RustCrypto) with the operating system's certificate
 /// verifier.
@@ -247,17 +297,27 @@ pub fn download(models_dir: &Path, m: &ModelInfo, progress: DownloadProgress) ->
 }
 
 /// [`download`] for any pinned file list (the neural voices use it too): missing files of
-/// `files` go into `dir`, each verified against its SHA-256 and size before it is renamed into
+/// `files` go into `dir`, each verified against its SHA-256 and size before it is atomically installed into
 /// place.
 #[cfg(feature = "download")]
 pub fn download_files(dir: &Path, files: &[ModelFile], progress: DownloadProgress) -> Result<(), crate::SpeechError> {
     use crate::SpeechError;
-    use std::io::{Read, Write};
     if let Some(file) = files.iter().find(|file| !valid_name(file.name)) {
         return Err(SpeechError::Download(format!("invalid model artifact name: {:?}", file.name)));
     }
+    if files.len() > 64 || files.iter().any(|f| f.size > 8 * 1024 * 1024 * 1024) {
+        return Err(SpeechError::Download("model artifact count or size exceeds the download limit".into()));
+    }
+    let total = files
+        .iter()
+        .filter(|f| !valid_file(&dir.join(f.name), f))
+        .try_fold(0u64, |sum, f| sum.checked_add(f.size))
+        .filter(|total| *total <= 32 * 1024 * 1024 * 1024)
+        .ok_or_else(|| SpeechError::Download("model download exceeds the total size limit".into()))?;
+    if !progress(0, total, "Preparing download") {
+        return Err(SpeechError::Cancelled);
+    }
     std::fs::create_dir_all(dir)?;
-    let total: u64 = files.iter().filter(|f| !valid_file(&dir.join(f.name), f)).map(|f| f.size).sum();
     let agent = agent();
     let mut done = 0u64;
     for f in files {
@@ -265,38 +325,55 @@ pub fn download_files(dir: &Path, files: &[ModelFile], progress: DownloadProgres
         if valid_file(&dest, f) {
             continue;
         }
-        let part = dir.join(format!("{}.part", f.name));
         let resp = agent.get(f.url).call().map_err(|e| SpeechError::Download(format!("{}: {e}", f.url)))?;
         let mut body = resp.into_body();
         let mut reader = body.as_reader();
-        let mut out = std::io::BufWriter::new(std::fs::File::create(&part)?);
-        let mut hasher = sha2::Sha256::new();
-        let mut buf = vec![0u8; 1 << 20];
-        let mut got = 0u64;
-        loop {
-            let n = reader.read(&mut buf).map_err(|e| SpeechError::Download(format!("{}: {e}", f.name)))?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-            out.write_all(&buf[..n])?;
-            got += n as u64;
-            if !progress(done + got, total, f.name) {
-                drop(out);
-                let _ = std::fs::remove_file(&part);
-                return Err(SpeechError::Cancelled);
-            }
-        }
-        out.flush()?;
-        drop(out);
-        let sha: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        if sha != f.sha256 || got != f.size {
-            let _ = std::fs::remove_file(&part);
-            return Err(SpeechError::Download(format!("{}: checksum mismatch (got {sha}, {got} bytes; expected {}, {} bytes)", f.name, f.sha256, f.size)));
-        }
-        std::fs::rename(&part, &dest)?;
+        receive_file(dir, f, &mut reader, progress, done, total)?;
         done += f.size;
     }
+    Ok(())
+}
+
+#[cfg(feature = "download")]
+fn receive_file(
+    dir: &Path,
+    f: &ModelFile,
+    reader: &mut dyn std::io::Read,
+    progress: DownloadProgress,
+    done: u64,
+    total: u64,
+) -> Result<(), crate::SpeechError> {
+    use crate::SpeechError;
+    use std::io::Write;
+    // Unique files prevent concurrent jobs from overwriting each other's partial download.
+    // The temporary file removes itself on every error path, including full disks and cancellation.
+    let mut part = tempfile::Builder::new().prefix(".filmcraft-model-").tempfile_in(dir)?;
+    let mut out = std::io::BufWriter::new(part.as_file_mut());
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut got = 0u64;
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| SpeechError::Download(format!("{}: {e}", f.name)))?;
+        if n == 0 {
+            break;
+        }
+        let next =
+            got.checked_add(n as u64).filter(|v| *v <= f.size).ok_or_else(|| SpeechError::Download(format!("{}: download exceeds pinned size", f.name)))?;
+        hasher.update(&buf[..n]);
+        out.write_all(&buf[..n])?;
+        got = next;
+        if !progress(done + got, total, f.name) {
+            return Err(SpeechError::Cancelled);
+        }
+    }
+    out.flush()?;
+    drop(out);
+    part.as_file().sync_all()?;
+    let sha: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if sha != f.sha256 || got != f.size {
+        return Err(SpeechError::Download(format!("{}: checksum mismatch (got {sha}, {got} bytes; expected {}, {} bytes)", f.name, f.sha256, f.size)));
+    }
+    part.persist(dir.join(f.name)).map_err(|e| SpeechError::Download(format!("{}: cannot install verified model: {}", f.name, e.error)))?;
     Ok(())
 }
 
@@ -312,6 +389,10 @@ fn agent() -> ureq::Agent {
                 .build(),
         )
         .timeout_connect(Some(std::time::Duration::from_secs(30)))
+        .timeout_resolve(Some(std::time::Duration::from_secs(30)))
+        .timeout_recv_response(Some(std::time::Duration::from_secs(30)))
+        .timeout_per_read(Some(std::time::Duration::from_secs(10)))
+        .timeout_global(Some(std::time::Duration::from_secs(3600)))
         .build()
         .into()
 }
@@ -326,11 +407,11 @@ mod tests {
         for m in catalogue() {
             assert!(m.size() > 100_000_000, "{}", m.id);
             for f in m.files {
-                assert!(f.url.starts_with("https://huggingface.co/openai/whisper-"), "{}", f.url);
+                assert!(f.url.starts_with("https://huggingface.co/openai/whisper-") || f.url.starts_with("https://huggingface.co/oruk/orukeet/"), "{}", f.url);
                 assert!(f.url.contains("/resolve/") && f.url.ends_with(f.name));
                 assert_eq!(f.sha256.len(), 64);
                 assert!(f.sha256.bytes().all(|b| b.is_ascii_hexdigit()));
-                if f.name == "tokenizer.json" {
+                if f.name == "tokenizer.json" && m.id.starts_with("whisper-") {
                     assert_eq!(f.sha256, shared_tokenizer_sha());
                 }
             }
@@ -381,5 +462,27 @@ mod tests {
         assert_eq!(missing_bytes(root.path(), &model), 3);
         std::fs::write(directory.join("tiny.bin"), b"abc").unwrap();
         assert!(installed(root.path(), &model));
+    }
+
+    #[cfg(feature = "download")]
+    #[test]
+    fn downloads_clean_up_interruption_corruption_and_cancellation_then_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let file = ModelFile {
+            name: "tiny.bin",
+            url: "https://example.invalid/weights",
+            size: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        };
+        for (body, cancel) in [(b"ab".as_slice(), false), (b"bad".as_slice(), false), (b"abc".as_slice(), true), (b"abcd".as_slice(), false)] {
+            let result = receive_file(root.path(), &file, &mut std::io::Cursor::new(body), &mut |done, _, _| !cancel || done == 0, 0, 3);
+            assert!(result.is_err());
+            assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0, "partial artifacts must be removed");
+        }
+        // A retry must replace a corrupt existing destination, including on Windows.
+        std::fs::write(root.path().join("tiny.bin"), b"bad").unwrap();
+        receive_file(root.path(), &file, &mut std::io::Cursor::new(b"abc"), &mut |_, _, _| true, 0, 3).unwrap();
+        assert_eq!(std::fs::read(root.path().join("tiny.bin")).unwrap(), b"abc");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 }

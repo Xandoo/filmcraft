@@ -31,9 +31,15 @@ impl FilmcraftApp {
         let language = i18n::Language::parse(&session.prefs.general.interface_language).unwrap_or_default();
         let ime_document_epoch = session.document_epoch;
         let ime_active_sequence = session.state.active_sequence;
+        let project_selection_active = !cfg!(target_arch = "wasm32") && session.project_closed;
         Self {
+            project_selection_runtime: crate::project_selection::Runtime::for_host(project_selection_active, ime_document_epoch),
             session,
-            ui: UiState { language, ..UiState::default() },
+            ui: UiState {
+                language,
+                project_selection: crate::project_selection::State { active: project_selection_active, ..Default::default() },
+                ..UiState::default()
+            },
             tokens: Tokens::for_kind(ThemeKind::Dark),
             frames,
             playback: Playback { speed: 1.0, ..Default::default() },
@@ -324,6 +330,7 @@ impl FilmcraftApp {
         self.logic_background(ctx, now);
         self.logic_session_events();
         self.logic_command_inbox(ctx);
+        crate::project_selection::poll(self, ctx);
         self.advance_playback(ctx);
         self.advance_source_playback(ctx);
         self.poll_jobs(ctx);

@@ -65,6 +65,7 @@ pub mod panels;
 pub mod perf;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod play_ahead;
+pub mod project_selection;
 mod rtl;
 pub mod scrub;
 mod shuttle;
@@ -196,6 +197,7 @@ pub enum ControlNotice {
 }
 
 pub struct FilmcraftApp {
+    pub project_selection_runtime: project_selection::Runtime,
     pub session: Session,
     pub ui: UiState,
     pub tokens: Tokens,

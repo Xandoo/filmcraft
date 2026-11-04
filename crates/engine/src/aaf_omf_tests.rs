@@ -475,6 +475,8 @@ mod selected_streams {
             "distinct tones",
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::File { path: format!("tone-source-{streams}.wav") },
                 info: source.info.clone(),
                 interpret: Default::default(),

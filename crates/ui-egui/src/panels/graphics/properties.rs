@@ -32,6 +32,7 @@ struct NumberField<'a> {
 
 struct Ctx<'a> {
     clip: ClipId,
+    batch: bool,
     layer: usize,
     /// The layer's index in the clip's effect list (what `effects.toggleAnimation` addresses).
     eidx: usize,
@@ -148,11 +149,21 @@ impl Ctx<'_> {
         if caps.all(|c| c == first) { first } else { 0 }
     }
     fn set(&mut self, id: &str, v: Value) {
+        if self.batch {
+            self.actions.push(("graphics.setSelectedText".into(), json!({"props": {id: v}})));
+            return;
+        }
         if let (Some((a, b)), Some(k)) = (self.range, char_style_key(id)) {
             self.actions.push(("graphics.setCharStyle".into(), json!({"clip": self.clip.0, "layer": self.layer, "start": a, "end": b, "style": {k: v}})));
             return;
         }
         self.actions.push(("graphics.set".into(), json!({"clip": self.clip.0, "layer": self.layer, "props": {id: v}})));
+    }
+    fn text_box(&mut self, ui: &mut egui::Ui) {
+        if !self.batch {
+            self.number(ui, tl!("Text Box Width"), NumberField { id: "box_width", speed: 2.0, range: (0.0, 100_000.0), decimals: 0, unit: "" });
+            self.number(ui, tl!("Text Box Height"), NumberField { id: "box_height", speed: 2.0, range: (0.0, 100_000.0), decimals: 0, unit: "" });
+        }
     }
     fn auto(&mut self, id: &str, r: Rect, label: &str) {
         self.autos.push((format!("graphics.prop.{id}"), r, label.to_string()));
@@ -172,6 +183,9 @@ impl Ctx<'_> {
     /// it here adds or updates a keyframe at the playhead instead of changing it everywhere. A
     /// Type-tool selection edits the selected characters, which have no keyframes: no stopwatch.
     fn stopwatch(&mut self, ui: &egui::Ui, row: Rect, id: &str) {
+        if self.batch {
+            return;
+        }
         let animatable = self.e.def().and_then(|d| d.param(id)).is_some_and(|d| d.animatable);
         if !animatable || (self.range.is_some() && char_style_key(id).is_some()) {
             return;
@@ -556,10 +570,15 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
         return;
     };
+    let batch = app.session.state.selection.len() > 1 && it.effects.iter().any(|e| e.effect == graphic::TEXT_LAYER);
     let ph = app.session.playhead();
     let mt = it.effect_time_at(ph.clamp(it.start, it.end() - Tick(1)));
     let idx = layer_indices(&it.effects);
-    let sel = app.session.state.graphic_layers.first().copied().filter(|l| *l < idx.len());
+    let sel = if batch {
+        idx.iter().position(|i| it.effects.get(*i).is_some_and(|e| e.effect == graphic::TEXT_LAYER))
+    } else {
+        app.session.state.graphic_layers.first().copied().filter(|l| *l < idx.len())
+    };
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut autos: Vec<(String, Rect, String)> = Vec::new();
     let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(12.0, 6.0))).id_salt("gfx-props"));
@@ -571,9 +590,14 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ui.painter().rect_filled(Rect::from_center_size(pos2(hr.min.x + 8.0, hr.center().y), vec2(12.0, 12.0)), 2.0, Color32::from_rgb(lc[0], lc[1], lc[2]));
         ui.painter().text(pos2(hr.min.x + 22.0, hr.center().y), Align2::LEFT_CENTER, &it.name, Tokens::semibold(12.5), t.text);
         // ---- layers (front first)
-        layers_section(app, ui, clip, &it, sel, &mut autos, &mut actions);
+        if batch {
+            ui.label(tl!("Edit all text layers in selected clips"));
+            ui.label(egui::RichText::new(tl!("Values show the first text layer. Only changed properties are applied.")).small());
+        } else {
+            layers_section(app, ui, clip, &it, sel, &mut autos, &mut actions);
+        }
         // ---- template properties (a graphic made from a graphics template)
-        if it.graphic.as_ref().is_some_and(|m| m.template.is_some()) && section(ui, app, "Template Properties", &t) {
+        if !batch && it.graphic.as_ref().is_some_and(|m| m.template.is_some()) && section(ui, app, "Template Properties", &t) {
             crate::panels::graphics_templates::template_controls(app, ui, clip, &it, mt, &mut autos, &mut actions);
         }
         let Some(l) = sel else {
@@ -586,7 +610,7 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         };
         let e = &it.effects[idx[l]];
         // a Type-tool selection in this layer: character properties apply to the selected characters
-        let range = app.ui.gfx_edit.as_ref().filter(|ed| ed.clip == clip.0 && ed.layer == l && ed.caret != ed.anchor).and_then(|ed| {
+        let range = app.ui.gfx_edit.as_ref().filter(|_| !batch).filter(|ed| ed.clip == clip.0 && ed.layer == l && ed.caret != ed.anchor).and_then(|ed| {
             let text = match pv(e, "text", mt) {
                 ParamValue::Text(s) => s,
                 _ => return None,
@@ -594,12 +618,12 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             let ch = |b: usize| text.get(..b.min(text.len())).map_or(0, |s| s.chars().count());
             Some((ch(ed.caret.min(ed.anchor)), ch(ed.caret.max(ed.anchor))))
         });
-        let mut cx = Ctx { clip, layer: l, eidx: idx[l], e, mt, t, actions: Vec::new(), autos: Vec::new(), range };
-        if section(ui, app, "Responsive Design - Position", &t) {
+        let mut cx = Ctx { clip, batch, layer: l, eidx: idx[l], e, mt, t, actions: Vec::new(), autos: Vec::new(), range };
+        if !batch && section(ui, app, "Responsive Design - Position", &t) {
             crate::panels::graphics_templates::responsive_position(app, ui, clip, &it, l, &mut cx.autos, &mut cx.actions);
         }
         // ---- align and transform
-        if section(ui, app, "Align and Transform", &t) {
+        if !batch && section(ui, app, "Align and Transform", &t) {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
                 for (how, tip) in [
@@ -632,24 +656,27 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             cx.number(ui, tl!("Opacity"), NumberField { id: "opacity", speed: 0.5, range: (0.0, 100.0), decimals: 0, unit: " %" });
         }
         // ---- text
-        let text_open = e.effect == graphic::TEXT_LAYER && text_section_header(ui, app, clip, l, e, mt, &mut cx.autos);
+        let text_open =
+            e.effect == graphic::TEXT_LAYER && (if batch { section(ui, app, "Text", &t) } else { text_section_header(ui, app, clip, l, e, mt, &mut cx.autos) });
         if text_open {
-            // source text (multi-line), committed as it is typed
-            let mut s = match pv(e, "text", mt) {
-                ParamValue::Text(s) => s,
-                _ => String::new(),
-            };
-            let before = s.clone();
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                let r = crate::widgets::accessible_name(
-                    ui.add(egui::TextEdit::multiline(&mut s).desired_rows(2).desired_width(ui.available_width() - 8.0).font(Tokens::ui(12.0))),
-                    "Source Text",
-                );
-                cx.autos.push(("graphics.sourceText".into(), r.rect, "Source Text".into()));
-            });
-            if s != before {
-                cx.actions.push(("graphics.setText".into(), json!({"clip": clip.0, "layer": l, "text": s, "merge": true})));
+            if !batch {
+                // source text (multi-line), committed as it is typed
+                let mut s = match pv(e, "text", mt) {
+                    ParamValue::Text(s) => s,
+                    _ => String::new(),
+                };
+                let before = s.clone();
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    let r = crate::widgets::accessible_name(
+                        ui.add(egui::TextEdit::multiline(&mut s).desired_rows(2).desired_width(ui.available_width() - 8.0).font(Tokens::ui(12.0))),
+                        "Source Text",
+                    );
+                    cx.autos.push(("graphics.sourceText".into(), r.rect, "Source Text".into()));
+                });
+                if s != before {
+                    cx.actions.push(("graphics.setText".into(), json!({"clip": clip.0, "layer": l, "text": s, "merge": true})));
+                }
             }
             let family = match cx.value("font") {
                 ParamValue::Text(f) => f,
@@ -717,8 +744,7 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             if response.changed() {
                 cx.set("vertical", json!(value));
             }
-            cx.number(ui, tl!("Text Box Width"), NumberField { id: "box_width", speed: 2.0, range: (0.0, 100_000.0), decimals: 0, unit: "" });
-            cx.number(ui, tl!("Text Box Height"), NumberField { id: "box_height", speed: 2.0, range: (0.0, 100_000.0), decimals: 0, unit: "" });
+            cx.text_box(ui);
             let (_, mut vui) = cx.row(ui, tl!("Style"));
             let caps = cx.caps();
             for (id, label, tip, on, font) in [
@@ -814,7 +840,7 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     for (cmd, mut p) in actions {
         // a drag of a property is one undo step: the first change of each press begins a new one,
         // the rest fold into it (like Effect Controls, #201 / #887)
-        if matches!(cmd.as_str(), "graphics.set" | "graphics.setCharStyle") && down {
+        if matches!(cmd.as_str(), "graphics.set" | "graphics.setCharStyle" | "graphics.setSelectedText") && down {
             p["merge"] = json!(true);
             p["begin"] = json!(begun != press);
             wrote = true;
@@ -915,6 +941,7 @@ mod tests {
         e.layer = Some(Box::new(LayerExtra { runs: apply_char_style(&[], 11, 6, 11, &red), ..Default::default() }));
         let cx = |range| Ctx {
             clip: ClipId(1),
+            batch: false,
             layer: 0,
             eidx: 0,
             e: &e,
@@ -949,6 +976,7 @@ mod tests {
         let mut e = graphic::new_text_layer("1234", Vec2::new(100.0, 100.0), 72.0);
         let mut cx = Ctx {
             clip: ClipId(1),
+            batch: false,
             layer: 0,
             eidx: 0,
             e: &e,
@@ -990,6 +1018,7 @@ mod tests {
         for range in [Some((0, 2)), Some((2, 4)), None] {
             let cx = Ctx {
                 clip: ClipId(1),
+                batch: false,
                 layer: 0,
                 eidx: 0,
                 e: &e,

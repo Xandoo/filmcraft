@@ -741,3 +741,56 @@ fn effect_controls_font_and_style_are_drop_downs_that_apply() {
     pick(&mut d, "Bold Italic");
     assert_eq!(text_param(&mut d, clip, "font_style"), Some(filmcraft_project::ParamValue::Text("Bold Italic".into())), "picking a style applies it");
 }
+
+#[test]
+fn multi_selected_text_size_drag_changes_all_and_undoes_once() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace":"Captions and Graphics"}));
+    let a = d.exec("graphics.newText", json!({"text":"First","newClip":true}))["clip"].as_u64().unwrap();
+    let b = d.exec("graphics.newText", json!({"text":"Second","newClip":true}))["clip"].as_u64().unwrap();
+    d.exec("timeline.select", json!({"clips":[a,b]}));
+    d.frames(4);
+    assert!(d.ok("ui.elements", json!({"prefix":"graphics.sourceText"})).as_array().unwrap().is_empty());
+    let before = d.harness.state().session.project.clone();
+    let n = d.harness.state().session.history.undo.len();
+    let r = d.rect("graphics.prop.size");
+    d.ok("ui.drag", json!({"from":{"x":r[0]+r[2]/2.0,"y":r[1]+r[3]/2.0},"to":{"x":r[0]+r[2]/2.0+60.0,"y":r[1]+r[3]/2.0},"steps":8}));
+    d.frames(4);
+    assert_eq!(d.harness.state().session.history.undo.len(), n + 1);
+    let mut sizes = Vec::new();
+    for c in [a, b] {
+        let it = d.harness.state().session.active_sequence().unwrap().find_item(filmcraft_project::ClipId(c)).unwrap().1;
+        sizes.push(it.effect("graphic_text").unwrap().param("size").unwrap().value.as_f64().unwrap());
+    }
+    assert_eq!(sizes[0], sizes[1]);
+    assert_ne!(sizes[0], 100.0);
+    d.shot("multi-text-properties");
+    d.exec("edit.undo", json!({}));
+    assert_eq!(d.harness.state().session.project, before);
+}
+
+#[test]
+fn paste_text_attributes_grid_opens_with_alt_v_and_pastes_outline() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace":"Captions and Graphics"}));
+    let a = d.exec("graphics.newText", json!({"text":"Source","newClip":true}))["clip"].as_u64().unwrap();
+    let b = d.exec("graphics.newText", json!({"text":"Destination","newClip":true}))["clip"].as_u64().unwrap();
+    d.exec("graphics.set", json!({"clip":a,"props":{"stroke":true,"stroke_width":8}}));
+    d.exec("timeline.select", json!({"clips":[a]}));
+    d.exec("edit.copy", json!({}));
+    d.exec("timeline.select", json!({"clips":[b]}));
+    d.ok("ui.key", json!({"key":"Alt+V"}));
+    d.frames(4);
+    for id in ["textMotion", "textFont", "textFill", "textOutline", "textSpacing", "textBackground", "textShadow"] {
+        d.rect(&format!("pasteAttributes.{id}"));
+    }
+    d.ok("ui.click", json!({"id":"pasteAttributes.textOutline"}));
+    d.shot("paste-text-attributes-grid");
+    d.ok("ui.click", json!({"id":"pasteAttributes.ok"}));
+    d.frames(4);
+    assert!(d.harness.state().ui.clip_dialog.is_none());
+    let it = d.harness.state().session.active_sequence().unwrap().find_item(filmcraft_project::ClipId(b)).unwrap().1;
+    let text = it.effect("graphic_text").unwrap();
+    assert_eq!(text.param("stroke_width").unwrap().value.as_f64(), Some(8.0));
+    assert_eq!(text.param("text").unwrap().value, filmcraft_project::ParamValue::Text("Destination".into()));
+}

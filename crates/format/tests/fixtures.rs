@@ -9,6 +9,27 @@ fn fixture(name: &str) -> Vec<u8> {
 }
 
 #[test]
+fn v18_stream_identities_roundtrip_and_v17_keeps_legacy_defaults() {
+    use filmcraft_media::streams::StreamId;
+    let legacy = decode(&fixture("v1-edit.fcproj")).unwrap().project;
+    let mut doc: serde_json::Value = serde_json::from_slice(&encode(&legacy, false)).unwrap();
+    doc["schema_version"] = 17.into();
+    let loaded = decode(&serde_json::to_vec(&doc).unwrap()).unwrap();
+    assert!(loaded.migrated());
+    assert!(loaded.project.items.values().filter_map(|i| i.as_media()).all(|m| m.stream.is_none()));
+    for id in [StreamId::Mp4 { track: 7 }, StreamId::Matroska { uid: u64::MAX.to_string(), number: "42".into() }] {
+        let mut project = loaded.project.clone();
+        let item = project.items.values_mut().find_map(|i| i.as_media_mut()).unwrap();
+        item.stream = Some(id.clone());
+        let bytes = encode(&project, false);
+        let again = decode(&bytes).unwrap();
+        assert!(again.project.items.values().filter_map(|i| i.as_media()).any(|m| m.stream.as_ref() == Some(&id)));
+        let envelope: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(envelope["schema_version"], 20);
+    }
+}
+
+#[test]
 fn v1_minimal_loads() {
     let l = decode(&fixture("v1-minimal.fcproj")).unwrap();
     assert_eq!(l.schema_version, 1);

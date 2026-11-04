@@ -232,6 +232,8 @@ fn tracking_session() -> (Session, ClipId) {
         "moving",
         filmcraft_project::Label::Iris,
         filmcraft_project::ItemKind::Media(Box::new(filmcraft_project::MediaClip {
+            stream: None,
+            recording: None,
             media: filmcraft_project::MediaRef::Generator(g.generator.clone()),
             info: info.clone(),
             interpret: Default::default(),

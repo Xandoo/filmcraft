@@ -388,6 +388,8 @@ fn project(frames: i64) -> (Arc<Project>, filmcraft_project::ItemId, SourceMap) 
         &info.name.clone(),
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(g.generator.clone()),
             info,
             interpret: Default::default(),

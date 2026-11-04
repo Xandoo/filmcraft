@@ -41,6 +41,8 @@
 //!   would drop them when saving.
 //! - **v16**: marker authors, named project swatches, and exact marker/clip hex colors.
 //! - **v17**: optional marker URLs, independent of notes and retained across marker-type changes.
+//! - **v18**: explicit native container stream identities on media items.
+//! - **v19**: one recording media item retains its stream catalog for normal drag-and-drop placement.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
@@ -63,7 +65,7 @@ pub type Migration = fn(Value) -> Result<Value, String>;
 /// edit a shipped one.
 pub const MIGRATIONS: &[Migration] = &[
     v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14, v14_to_v15,
-    v15_to_v16, v16_to_v17,
+    v15_to_v16, v16_to_v17, v17_to_v18, v18_to_v19, v19_to_v20,
 ];
 
 /// The schema version this build writes (and the newest it reads).
@@ -402,6 +404,20 @@ fn v15_to_v16(doc: Value) -> Result<Value, String> {
 }
 
 /// v16 → v17: marker URLs default empty. Older builds must not silently drop saved URLs.
+fn v17_to_v18(doc: Value) -> Result<Value, String> {
+    Ok(doc)
+}
+
+// Multi-video recording items retain their complete stream catalog for ordinary placement.
+fn v18_to_v19(doc: Value) -> Result<Value, String> {
+    Ok(doc)
+}
+
+/// Full component tangents are optional; missing fields retain the legacy curve exactly.
+fn v19_to_v20(doc: Value) -> Result<Value, String> {
+    Ok(doc)
+}
+
 fn v16_to_v17(doc: Value) -> Result<Value, String> {
     Ok(doc)
 }
@@ -412,7 +428,7 @@ mod tests {
 
     #[test]
     fn schema_version_matches_table() {
-        assert_eq!(SCHEMA_VERSION, 17);
+        assert_eq!(SCHEMA_VERSION, 20);
     }
 
     #[test]
@@ -517,7 +533,20 @@ mod tests {
         let view = ProjectView {
             open_sequences: vec![seq],
             active_sequence: Some(seq),
-            sequences: [(seq, SequenceView { pps: 80.0, scroll: 1.5, v_scroll: 0.0, a_scroll: 4.0, video_track_h: 60.0, audio_track_h: 56.0 })].into(),
+            sequences: [(
+                seq,
+                SequenceView {
+                    pps: 80.0,
+                    scroll: 1.5,
+                    v_scroll: 0.0,
+                    a_scroll: 4.0,
+                    video_track_h: 60.0,
+                    audio_track_h: 56.0,
+                    fixed_playhead: false,
+                    playhead_anchor: 0.5,
+                },
+            )]
+            .into(),
             playheads: [(seq, filmcraft_time::Tick(3 * filmcraft_time::TICKS_PER_SECOND))].into(),
         };
         for pretty in [true, false] {

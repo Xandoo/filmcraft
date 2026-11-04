@@ -110,7 +110,7 @@ impl FilmcraftApp {
             self.thumb_touched(ctx, &name);
             return Some((id, egui::vec2(img.w as f32, img.h as f32)));
         }
-        let scale = width as f32 / src_w.max(1) as f32;
+        let scale = (width as f32 / src_w.max(1) as f32).min(1.0);
         let project = self.session.project.clone();
         self.frames.request(key, rate.tick_of(frame), scale, &project, 50);
         let shown = self.texture_existing(&name);
@@ -125,14 +125,39 @@ impl FilmcraftApp {
     /// tile or a hover scrub got a texture of its own that was never freed (#1682).
     fn thumb_touched(&mut self, ctx: &egui::Context, name: &str) {
         let pass = ctx.cumulative_pass_nr();
-        if self.thumb_used.insert(name.to_string(), pass).is_some() || self.thumb_used.len() <= MAX_THUMB_TEXTURES {
+        if self.thumb_used.insert(name.to_string(), pass).is_some() {
+            return;
+        }
+        const BUDGET: usize = 128 * 1024 * 1024;
+        let bytes = |name: &str| {
+            self.textures
+                .get(name)
+                .map(|(_, t)| {
+                    let [w, h] = t.size();
+                    w.saturating_mul(h).saturating_mul(4)
+                })
+                .unwrap_or(0)
+        };
+        let mut total = self.thumb_used.keys().fold(0usize, |n, key| n.saturating_add(bytes(key)));
+        if self.thumb_used.len() <= MAX_THUMB_TEXTURES && total <= BUDGET {
             return;
         }
         // down to three quarters, never a thumbnail already drawn in this pass
         let mut old: Vec<(u64, String)> = self.thumb_used.iter().filter(|(_, p)| **p < pass).map(|(n, p)| (*p, n.clone())).collect();
         old.sort_unstable();
-        let excess = self.thumb_used.len().saturating_sub(MAX_THUMB_TEXTURES * 3 / 4);
-        for (_, n) in old.into_iter().take(excess) {
+        for (_, n) in old {
+            if self.thumb_used.len() <= MAX_THUMB_TEXTURES * 3 / 4 && total <= BUDGET * 3 / 4 {
+                break;
+            }
+            let size = self
+                .textures
+                .get(&n)
+                .map(|(_, t)| {
+                    let [w, h] = t.size();
+                    w.saturating_mul(h).saturating_mul(4)
+                })
+                .unwrap_or(0);
+            total = total.saturating_sub(size);
             self.thumb_used.remove(&n);
             self.textures.remove(&n);
         }

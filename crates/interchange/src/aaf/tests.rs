@@ -38,6 +38,8 @@ fn project() -> (Project, ItemId) {
         "a.mov",
         filmcraft_project::Label::Iris,
         filmcraft_project::ItemKind::Media(Box::new(filmcraft_project::MediaClip {
+            stream: None,
+            recording: None,
             media: filmcraft_project::MediaRef::File { path: "/m/a.mov".into() },
             info,
             interpret: Default::default(),

@@ -946,3 +946,93 @@ fn applied_effects_render_the_same_before_or_after_the_intrinsic_ones() {
     }
     check(s, clip, "video clip");
 }
+
+#[test]
+fn selected_text_styles_are_atomic_preserve_content_and_undo_together() {
+    let mut s = demo();
+    let a = s.execute("graphics.newText", json!({"text":"First", "newClip":true})).unwrap()["clip"].as_u64().unwrap();
+    let b = s.execute("graphics.newText", json!({"text":"Second", "newClip":true})).unwrap()["clip"].as_u64().unwrap();
+    s.execute("graphics.newText", json!({"clip":b,"text":"Third"})).unwrap();
+    s.execute("graphics.setCharStyle", json!({"clip":a,"layer":0,"start":0,"end":2,"style":{"color":"#ff0000","italic":true}})).unwrap();
+    s.execute("timeline.select", json!({"clips":[a,b,a]})).unwrap();
+    let before = s.project.clone();
+    let n = s
+        .execute(
+            "graphics.setSelectedText",
+            json!({"props":{"font":"Inter","size":80,"fill_color":"#00ff00","stroke":true,"stroke_color":"#0000ff","stroke_width":4}}),
+        )
+        .unwrap();
+    assert_eq!(n["layers"], 3);
+    assert_eq!(text_of(&layers(&s, ClipId(a))[0]), "First");
+    assert_eq!(text_of(&layers(&s, ClipId(b))[0]), "Second");
+    assert_eq!(text_of(&layers(&s, ClipId(b))[1]), "Third");
+    for c in [a, b] {
+        let it = s.active_sequence().unwrap().find_item(ClipId(c)).unwrap().1;
+        for e in it.effects.iter().filter(|e| e.effect == super::graphic::TEXT_LAYER) {
+            assert_eq!(e.param("font").unwrap().value, filmcraft_project::ParamValue::Text("Inter".into()));
+            assert_eq!(e.param("fill_color").unwrap().value.as_color(), Some([0.0, 1.0, 0.0, 1.0]));
+            assert_eq!(e.param("size").unwrap().value.as_f64(), Some(80.0));
+            assert_eq!(e.param("stroke").unwrap().value.as_bool(), Some(true));
+        }
+    }
+    let after = s.project.clone();
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project, before);
+    s.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(s.project, after);
+    for props in [json!({"size":99,"zz_bad":1}), json!({"text":"Destroyed"}), json!({"size":[]}), json!({})] {
+        assert!(s.execute("graphics.setSelectedText", json!({"props":props})).is_err());
+        assert_eq!(s.project, after);
+    }
+}
+
+#[test]
+fn paste_animated_motion_to_multiple_text_clips_preserves_their_words() {
+    let mut s = demo();
+    let mut ids = Vec::new();
+    for (text, duration) in [("Source", 2), ("Destination", 4), ("Other", 6)] {
+        ids.push(s.execute("graphics.newText", json!({"text":text,"newClip":true,"seconds":duration,"time":0})).unwrap()["clip"].as_u64().unwrap());
+    }
+    for (time, scale) in [(0, 100), (filmcraft_time::TICKS_PER_SECOND, 200)] {
+        s.execute("graphics.set", json!({"clip":ids[0],"time":time,"keyframe":true,"props":{"scale":scale}})).unwrap();
+        s.execute("effects.setParam", json!({"clip":ids[0],"effect":"motion","param":"rotation","time":time,"keyframe":true,"value":scale})).unwrap();
+    }
+    s.execute("timeline.select", json!({"clips":[ids[0]]})).unwrap();
+    s.execute("edit.copy", json!({})).unwrap();
+    s.execute("timeline.select", json!({"clips":[ids[1],ids[2]]})).unwrap();
+    let before = s.project.clone();
+    let n = s.execute("edit.pasteAttributes", json!({"textMotion":true,"opacity":false,"effects":false,"scaleTimes":true})).unwrap();
+    assert_eq!(n["clips"], 2);
+    for (c, word, seconds) in [(ids[1], "Destination", 2), (ids[2], "Other", 3)] {
+        assert_eq!(text_of(&layers(&s, ClipId(c))[0]), word);
+        let it = s.active_sequence().unwrap().find_item(ClipId(c)).unwrap().1;
+        for (effect, param) in [(super::graphic::TEXT_LAYER, "scale"), ("motion", "rotation")] {
+            let keys = &it.effect(effect).unwrap().param(param).unwrap().keyframes;
+            assert_eq!(keys.len(), 2);
+            assert_eq!(keys[1].time, Tick(seconds * filmcraft_time::TICKS_PER_SECOND));
+        }
+    }
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project, before);
+}
+
+#[test]
+fn paste_text_style_groups_leave_unchecked_properties_unchanged() {
+    let mut s = demo();
+    let a = s.execute("graphics.newText", json!({"text":"Source","newClip":true})).unwrap()["clip"].as_u64().unwrap();
+    let b = s.execute("graphics.newText", json!({"text":"Destination","newClip":true})).unwrap()["clip"].as_u64().unwrap();
+    s.execute("graphics.set", json!({"clip":a,"props":{"size":70,"fill_color":"#ff0000","stroke":true,"stroke_width":8}})).unwrap();
+    s.execute("timeline.select", json!({"clips":[a]})).unwrap();
+    s.execute("edit.copy", json!({})).unwrap();
+    s.execute("timeline.select", json!({"clips":[b]})).unwrap();
+    let before = s.project.clone();
+    s.execute("edit.pasteAttributes", json!({"motion":false,"opacity":false,"effects":false,"textOutline":true})).unwrap();
+    let it = s.active_sequence().unwrap().find_item(ClipId(b)).unwrap().1;
+    let text = it.effect(super::graphic::TEXT_LAYER).unwrap();
+    assert_eq!(text.param("stroke_width").unwrap().value.as_f64(), Some(8.0));
+    assert_eq!(text.param("size").unwrap().value.as_f64(), Some(100.0));
+    assert_eq!(text.param("fill_color").unwrap().value.as_color(), Some([1.0, 1.0, 1.0, 1.0]));
+    assert_eq!(text_of(&layers(&s, ClipId(b))[0]), "Destination");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project, before);
+}

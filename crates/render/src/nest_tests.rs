@@ -26,6 +26,8 @@ impl Rig {
             &info.name.clone(),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(g.generator.clone()),
                 info,
                 interpret: Default::default(),

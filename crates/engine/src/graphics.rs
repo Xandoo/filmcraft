@@ -322,6 +322,89 @@ pub(crate) fn set_props_keyed(
     Ok(counts)
 }
 
+/// Independently selectable text attributes shared by the paste command and dialog.
+pub const TEXT_ATTRIBUTE_GROUPS: &[(&str, &str, &[&str])] = &[
+    ("textMotion", "Text Layer Motion", &["position", "anchor", "scale", "scale_width", "uniform_scale", "rotation", "opacity"]),
+    ("textFont", "Font and Size", &["font", "font_style", "size", "faux_bold", "faux_italic", "underline", "strikethrough", "caps", "kerning", "ligatures"]),
+    ("textFill", "Text Color", &["fill", "fill_color", "fill_kind", "gradient_start", "gradient_end", "gradient_angle"]),
+    ("textOutline", "Text Outline", &["stroke", "stroke_color", "stroke_width", "stroke_type", "stroke2", "stroke2_color", "stroke2_width", "stroke2_type"]),
+    ("textSpacing", "Text Spacing", &["align", "tracking", "leading", "baseline_shift"]),
+    ("textBackground", "Text Background", &["background", "background_color", "background_opacity", "background_size", "background_radius"]),
+    ("textShadow", "Text Shadow", &["shadow", "shadow_color", "shadow_opacity", "shadow_angle", "shadow_distance", "shadow_size", "shadow_blur"]),
+];
+
+/// Remove only the character overrides for explicitly changed layer properties.
+pub(crate) fn clear_style_overrides(e: &mut EffectInstance, keys: &[&str]) {
+    if let Some(extra) = e.layer.as_mut() {
+        for run in &mut extra.runs {
+            for key in keys {
+                match param_id(key) {
+                    "font" => run.style.font = None,
+                    "font_style" => run.style.font_style = None,
+                    "size" => run.style.size = None,
+                    "fill_color" => run.style.fill = None,
+                    "faux_bold" => run.style.faux_bold = None,
+                    "faux_italic" => run.style.faux_italic = None,
+                    "underline" => run.style.underline = None,
+                    "strikethrough" => run.style.strikethrough = None,
+                    "tracking" => run.style.tracking = None,
+                    "baseline_shift" => run.style.baseline_shift = None,
+                    "caps" => run.style.caps = None,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Apply style changes to every text layer in the selected clips as one undo step.
+/// Content, layer identities, geometry and unrelated character overrides survive.
+fn set_selected_text(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "graphics.setSelectedText";
+    let props = p.get("props").and_then(Value::as_object).ok_or_else(|| bad(ID, "need `props`"))?;
+    if props.is_empty()
+        || props.keys().any(|k| {
+            matches!(
+                param_id(k),
+                "text" | "enabled" | "position" | "anchor" | "scale" | "scale_width" | "uniform_scale" | "rotation" | "opacity" | "box_width" | "box_height"
+            )
+        })
+    {
+        return Err(bad(ID, "supply text style properties only"));
+    }
+    let targets: std::collections::BTreeSet<_> = s.state.selection.iter().copied().collect();
+    let tl = s.playhead();
+    let keys: Vec<&str> = props.keys().map(String::as_str).collect();
+    let merge = bool_p(p, "merge").unwrap_or(false).then(|| format!("{ID}:{targets:?}"));
+    if bool_p(p, "begin").unwrap_or(false) {
+        s.history.merge_key = None;
+    }
+    let count = s.edit_sequence_as("Change Selected Text Styles", merge.as_deref(), |q, _, _| {
+        let mut count = 0usize;
+        for clip in &targets {
+            let Some((track, it)) = q.find_item(*clip) else { continue };
+            if q.track(track).is_some_and(|t| t.locked) {
+                return Err(bad(ID, "a selected track is locked"));
+            }
+            if it.duration <= Tick::ZERO || it.end() <= it.start {
+                return Err(bad(ID, "invalid clip duration"));
+            }
+            let Some((_, it)) = q.find_item_mut(*clip) else { continue };
+            let mt = it.effect_time_at(tl.clamp(it.start, it.end() - Tick(1)));
+            for e in it.effects.iter_mut().filter(|e| e.effect == graphic::TEXT_LAYER) {
+                apply_props(e, props, mt, false)?;
+                clear_style_overrides(e, &keys);
+                count = count.saturating_add(1);
+            }
+        }
+        if count == 0 {
+            return Err(bad(ID, "select clips containing text layers"));
+        }
+        Ok(count)
+    })?;
+    Ok(json!({"layers": count}))
+}
+
 /// Turn a text layer into point text (no box; the lines the box wrapped become real lines) or
 /// paragraph text (a box fitted to the text). The text stays where it is: the layer's origin
 /// moves between the first baseline and the box's top-left corner, and the anchor point is
@@ -828,6 +911,15 @@ fn menu_commands() -> Vec<CommandSpec> {
     const D: &[&str] = &["Graphics and Titles", "Distribute"];
     const SEL: &[&str] = &["Graphics and Titles", "Select"];
     vec![
+        spec(
+            "graphics.setSelectedText",
+            "Set Selected Text Styles",
+            &[],
+            None,
+            r#"{"props":{property:value},"merge":bool?,"begin":bool?} (all text layers in selected clips, one undo step)"#,
+            has_seq,
+            set_selected_text,
+        ),
         spec(
             "graphics.newVerticalText",
             "Vertical Text",

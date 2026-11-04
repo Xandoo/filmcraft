@@ -20,6 +20,8 @@ fn project() -> (Arc<Project>, ItemId, SourceMap) {
     let g = GeneratorSource::new(Generator::ColorMatte { color: [1.0, 0.0, 0.0, 1.0] }, 320, 180, rate, Tick(2 * TICKS_PER_SECOND));
     let info = g.info().clone();
     let clip = MediaClip {
+        stream: None,
+        recording: None,
         media: MediaRef::Generator(g.generator.clone()),
         info: info.clone(),
         interpret: Default::default(),

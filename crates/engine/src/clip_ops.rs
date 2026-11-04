@@ -111,7 +111,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "Paste Attributes…",
             &["Edit"],
             Some("Cmd+Alt+V"),
-            r#"{"clips":[id]?,"motion":bool=true,"opacity":bool=true,"timeRemapping":bool=true,"volume":bool=true,"channelVolume":bool=true,"panner":bool=true,"effects":bool|[effectId]=true,"scaleTimes":bool=true}"#,
+            r#"{"clips":[id]?,"motion":bool=true,"opacity":bool=true,"timeRemapping":bool=true,"volume":bool=true,"channelVolume":bool=true,"panner":bool=true,"effects":bool|[effectId]=true,"scaleTimes":bool=true,"textMotion":bool=false,"textFont":bool=false,"textFill":bool=false,"textOutline":bool=false,"textSpacing":bool=false,"textBackground":bool=false,"textShadow":bool=false (text layers matched in stacking order; preserves text)}"#,
             can_paste_attributes,
             paste_attributes,
         ),

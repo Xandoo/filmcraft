@@ -48,7 +48,7 @@ fn nominal_rate(timescale: u32, samples: &[Sample]) -> Option<FrameRate> {
     let mut durs: Vec<u32> = samples.iter().map(|s| s.duration).filter(|&d| d > 0).collect();
     durs.sort_unstable();
     let &median = durs.get(durs.len() / 2)?;
-    let near: Vec<f64> = durs.iter().filter(|&&d| d.abs_diff(median) * 4 <= median).map(|&d| f64::from(d)).collect();
+    let near: Vec<f64> = durs.iter().filter(|&&d| u64::from(d.abs_diff(median)) * 4 <= u64::from(median)).map(|&d| f64::from(d)).collect();
     let mean = near.iter().sum::<f64>() / near.len().max(1) as f64;
     if mean <= 0.0 {
         return None;
@@ -82,7 +82,7 @@ struct Mp4Audio {
 pub struct Mp4Source {
     info: MediaInfo,
     bytes: crate::Src,
-    file: Mp4File,
+    file: Arc<Mp4File>,
     vtrack: Option<usize>,
     video: GopCache,
     /// Look frames up by the start of their frame: the video track's timestamp unit is half a frame
@@ -269,14 +269,27 @@ impl Mp4Source {
     /// Open from a random-access reader: only the index is read now, samples on demand.
     pub fn open_reader(name: &str, reader: filmcraft_media::SharedReader) -> crate::Result<Self> {
         let bytes = crate::Src(reader);
-        let mut file = filmcraft_isobmff::open(&bytes).map_err(|e| CodecError::Container(e.to_string()))?;
+        let file = filmcraft_isobmff::open(&bytes).map_err(|e| CodecError::Container(e.to_string()))?;
+        Self::from_index(name, bytes.0.clone(), Arc::new(file), None)
+    }
+
+    pub(crate) fn from_index(name: &str, reader: filmcraft_media::SharedReader, mut file: Arc<Mp4File>, selection: Option<usize>) -> crate::Result<Self> {
+        let bytes = crate::Src(reader);
         // A track needs samples, a sample description and a timescale to be playable (damaged
         // files can lack them: indexing `entries[0]` or dividing by the timescale used to panic).
         let playable = |t: &&filmcraft_isobmff::Track, kind| t.kind == kind && !t.samples.is_empty() && !t.entries.is_empty() && t.timescale > 0;
-        let vtrack = file.tracks.iter().position(|t| playable(&t, TrackKind::Video));
+        let vtrack = selection
+            .filter(|&i| file.tracks.get(i).is_some_and(|t| playable(&t, TrackKind::Video)))
+            .or_else(|| if selection.is_none() { file.tracks.iter().position(|t| playable(&t, TrackKind::Video)) } else { None });
         // every audio track is a stream (the track count comes from the file: capped)
-        let atracks: Vec<usize> =
-            file.tracks.iter().enumerate().filter(|(_, t)| playable(t, TrackKind::Audio)).map(|(i, _)| i).take(filmcraft_media::MAX_AUDIO_STREAMS).collect();
+        let atracks: Vec<usize> = file
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(i, t)| playable(t, TrackKind::Audio) && selection.is_none_or(|k| k == *i))
+            .map(|(i, _)| i)
+            .take(filmcraft_media::MAX_AUDIO_STREAMS)
+            .collect();
         if vtrack.is_none() && atracks.is_empty() {
             return Err(CodecError::Unsupported("no playable tracks".into()));
         }
@@ -310,7 +323,13 @@ impl Mp4Source {
             {
                 explicit_color = Some(color);
             }
-            let bitrate = (t.samples.iter().map(|s| s.size as u64).sum::<u64>() * 8 * t.timescale as u64).checked_div(t.duration);
+            let bitrate = t
+                .samples
+                .iter()
+                .try_fold(0u64, |n, s| n.checked_add(u64::from(s.size)))
+                .and_then(|n| n.checked_mul(8))
+                .and_then(|n| n.checked_mul(u64::from(t.timescale)))
+                .and_then(|n| n.checked_div(t.duration));
             let mut info = VideoStreamInfo {
                 width: w,
                 height: h,
@@ -399,12 +418,16 @@ impl Mp4Source {
                 Some(Mp4Audio { track: i, state, starts, offset, preroll })
             })
             .collect();
-        snap_to_frame_grid(&mut file, vtrack);
-        rebase_unedited_video(&mut file, vtrack, &mut audios);
-        let snap = vtrack.zip(info.video.as_ref()).is_some_and(|(i, v)| {
-            let t = &file.tracks[i];
-            crate::gop::snap_coarse_units(t.samples.iter().map(|s| s.pts.saturating_add(t.edit_offset)), 1, i64::from(t.timescale), v.frame_rate)
-        });
+        if selection.is_none() {
+            let f = Arc::make_mut(&mut file);
+            snap_to_frame_grid(f, vtrack);
+            rebase_unedited_video(f, vtrack, &mut audios);
+        }
+        let snap = selection.is_none()
+            && vtrack.zip(info.video.as_ref()).is_some_and(|(i, v)| {
+                let t = &file.tracks[i];
+                crate::gop::snap_coarse_units(t.samples.iter().map(|s| s.pts.saturating_add(t.edit_offset)), 1, i64::from(t.timescale), v.frame_rate)
+            });
         Ok(Self { info, bytes, file, vtrack, video: GopCache::new(explicit_color).with_rotation(rotation).with_crop(aperture), snap, audios })
     }
 
@@ -924,7 +947,7 @@ fn rebase_unedited_video(file: &mut Mp4File, vtrack: Option<usize>, audios: &mut
 /// decode timeline). "To its end" means off by less than rounding can be: less than one movie unit
 /// (so exactly one unit is a real trim) and less than the last picture (a trim cuts whole pictures,
 /// which can be shorter than a coarse movie unit). Both are compared exactly, in the two timescales.
-fn presentation_duration(file: &Mp4File, t: &filmcraft_isobmff::Track) -> Tick {
+pub(crate) fn presentation_duration(file: &Mp4File, t: &filmcraft_isobmff::Track) -> Tick {
     let media = Tick::from_rational(t.duration as i64, 1, t.timescale as i64);
     if file.fragmented || t.edits.is_empty() || file.timescale == 0 {
         return media;

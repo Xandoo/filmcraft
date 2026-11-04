@@ -10,6 +10,10 @@ use super::{
 // ---------------------------------------------------------------------------------------------
 
 pub(super) fn sequence_from_clip(s: &mut Session, p: &Value) -> Result<Value> {
+    s.edit_group("New Sequence From Clip", |s| sequence_from_clip_inner(s, p))
+}
+
+fn sequence_from_clip_inner(s: &mut Session, p: &Value) -> Result<Value> {
     let items: Vec<ItemId> = items_p(s, p).into_iter().filter(|i| is_clip_item(&s.project, *i)).collect();
     let first = *items.first().ok_or_else(|| bad("file.newSequenceFromClip", "select a clip in the Project panel"))?;
     let pi = s.project.item(first).ok_or_else(|| bad("file.newSequenceFromClip", "no such item"))?.clone();
@@ -29,6 +33,11 @@ pub(super) fn sequence_from_clip(s: &mut Session, p: &Value) -> Result<Value> {
         })
         .unwrap_or(1);
     let n0 = s.history.undo.len();
+    let budget = u64::try_from(n_audio.max(1))
+        .ok()
+        .and_then(|n| n.checked_add(2))
+        .ok_or_else(|| bad("file.newSequenceFromClip", "sequence identity budget overflow"))?;
+    s.project.next_id.checked_add(budget).ok_or_else(|| bad("file.newSequenceFromClip", "project identity space exhausted"))?;
     let name = pi.name.clone();
     let bin = s.project.root.parent_of(first).filter(|b| *b != s.project.root.id);
     let seq = s.edit("New Sequence From Clip", |pr, st| {
@@ -194,6 +203,8 @@ pub(super) fn offline_file(s: &mut Session, p: &Value) -> Result<Value> {
             &name,
             if has_v { Label::Iris } else { Label::Caribbean },
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::File { path: file_name },
                 info,
                 interpret: Default::default(),
@@ -219,6 +230,15 @@ pub(super) fn close_project(s: &mut Session, p: &Value) -> Result<Value> {
     if s.is_dirty() && !bool_p(p, "force").unwrap_or(false) {
         return Err(EngineError::Other("the project has unsaved changes: save it first, or pass {\"force\": true} to discard them".into()));
     }
+    crate::masks::discard_jobs(s);
+    s.workspace_thumbnail_next = None;
+    s.workspace_adopted_save = None;
+    s.project_closed = true;
+    let proxies = s.media.use_proxies();
+    s.media = std::sync::Arc::new(crate::MediaPool::default());
+    s.media.set_use_proxies(proxies);
+    s.offline = Default::default();
+    s.media_stamps.clear();
     s.project = std::sync::Arc::new(Project::new("Untitled"));
     s.project_instance = std::sync::Arc::new(());
     s.document_epoch = s.document_epoch.wrapping_add(1);

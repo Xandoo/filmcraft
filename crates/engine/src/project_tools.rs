@@ -1004,7 +1004,9 @@ pub fn previews_dir_for(project: &Project, path: &str, chosen: &[String]) -> std
 pub fn trusted_scratch(dir: Option<&str>, project_path: Option<&str>, chosen: &[String]) -> Option<std::path::PathBuf> {
     let dir = dir.filter(|d| !d.is_empty())?;
     let resolved = std::path::PathBuf::from(crate::doc_path::resolve(dir, project_path.map(std::path::Path::new)).ok()?);
-    if chosen.iter().any(|c| c == dir) {
+    if chosen.iter().any(|chosen| {
+        chosen == dir || crate::doc_path::resolve(chosen, project_path.map(std::path::Path::new)).is_ok_and(|path| std::path::Path::new(&path) == resolved)
+    }) {
         return Some(resolved);
     }
     let project = std::path::absolute(project_path?).ok()?;

@@ -3723,3 +3723,27 @@
 	Previous	Anterior
 	Next	Siguiente
 	Enter a valid HH:MM:SS:FF timecode	Introduce un código de tiempo válido HH:MM:SS:FF
+
+# Project Selection
+	Your projects	Tus proyectos
+	Recent projects	Proyectos recientes
+	New Project	Nuevo proyecto
+	Open Project	Abrir proyecto
+	Create Demo Project	Crear proyecto de demostración
+	Grid view	Vista de cuadrícula
+	List view	Vista de lista
+	Loading projects…	Cargando proyectos…
+	Create a project or open an existing one to get started.	Crea un proyecto o abre uno existente para empezar.
+	Last opened:	Última apertura:
+	Modified:	Modificado:
+	Unavailable	No disponible
+	Locate	Localizar
+	Remove from Recents	Quitar de recientes
+	Save As Project Folder	Guardar como carpeta de proyecto
+	Project name	Nombre del proyecto
+	Parent directory	Carpeta principal
+	Imported media stays in its original location.	Los medios importados permanecen en su ubicación original.
+	Create Project	Crear proyecto
+	Recent Projects	Proyectos recientes
+	Locate Project	Localizar proyecto
+	Project Selection Settings	Ajustes de selección de proyectos

@@ -1163,6 +1163,47 @@ fn linked_slip_keeps_picture_and_sound_aligned_at_unequal_media_limits() {
 }
 
 #[test]
+fn cut_at_playhead_obeys_selection_links_locks_and_boundaries() {
+    let mut s = Session::default();
+    s.execute("file.newProject", json!({"name":"Cut"})).unwrap();
+    s.execute("file.newSequence", json!({"fps":25,"video":1,"audio":1,"width":16,"height":16})).unwrap();
+    let item = s.execute("file.newOfflineFile", json!({"name":"AV","seconds":4,"fps":25,"video":true,"audio":true})).unwrap()["item"].as_u64().unwrap();
+    let result = s.execute("timeline.place", json!({"item":item,"track":"V1","audioTrack":"A1","time":0})).unwrap();
+    let v = ClipId(result["clips"][0].as_u64().unwrap());
+    let a = ClipId(result["clips"][1].as_u64().unwrap());
+    let middle = s.sequence_rate().tick_of(25);
+    s.set_playhead(middle);
+    s.state.selection = vec![v, v];
+    s.state.linked_selection = true;
+    assert_eq!(s.execute("sequence.cutAtPlayhead", json!({})).unwrap()["cuts"], 2);
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().video_tracks[0].items.len(), 1);
+    s.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().video_tracks[0].items.len(), 2);
+    s.execute("edit.undo", json!({})).unwrap();
+    s.state.linked_selection = false;
+    s.state.selection = vec![v];
+    assert_eq!(s.execute("sequence.cutAtPlayhead", json!({})).unwrap()["cuts"], 1);
+    s.execute("edit.undo", json!({})).unwrap();
+    s.state.selection.clear();
+    s.state.targeting.values_mut().for_each(|t| t.targeted.clear());
+    assert_eq!(s.execute("sequence.cutAtPlayhead", json!({})).unwrap()["cuts"], 2);
+    s.execute("edit.undo", json!({})).unwrap();
+    s.state.selection = vec![a];
+    s.set_playhead(Tick::ZERO);
+    assert_eq!(s.execute("sequence.cutAtPlayhead", json!({})).unwrap()["cuts"], 0);
+    s.set_playhead(s.sequence_rate().tick_of(125));
+    assert_eq!(s.execute("sequence.cutAtPlayhead", json!({})).unwrap()["cuts"], 0);
+    s.set_playhead(middle);
+    s.edit_sequence("Lock audio", |q, _, _| {
+        q.audio_tracks[0].locked = true;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(s.execute("sequence.cutAtPlayhead", json!({})).unwrap()["cuts"], 0);
+}
+
+#[test]
 fn slipping_by_the_most_negative_delta_clamps_instead_of_overflowing() {
     // `slip_together` took `abs()` of the requested delta: i64::MIN (from the control channel, MCP
     // or a script, as ticks or as frames, which saturate to it) overflowed, a panic in debug builds

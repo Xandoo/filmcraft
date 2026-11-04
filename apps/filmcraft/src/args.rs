@@ -42,7 +42,7 @@ pub struct Launch {
     /// A project and / or media files to open.
     pub files: Vec<String>,
     pub demo: bool,
-    /// `--demo` / `--empty` given: skip Settings ▸ General ▸ At Startup.
+    /// `--demo` / `--empty` given: bypass Project Selection.
     pub startup_flag: bool,
     pub recover: Option<bool>,
     pub data_dir: Option<std::path::PathBuf>,
@@ -66,7 +66,7 @@ pub fn parse(env_control_port: Option<String>, args: impl IntoIterator<Item = Os
         control_port: None,
         control_input_only: false,
         files: Vec::new(),
-        demo: true,
+        demo: false,
         startup_flag: false,
         recover: None,
         data_dir: None,
@@ -231,7 +231,7 @@ mod tests {
                 control_port: None,
                 control_input_only: false,
                 files: vec![],
-                demo: true,
+                demo: false,
                 startup_flag: false,
                 recover: None,
                 data_dir: None,

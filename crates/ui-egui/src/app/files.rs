@@ -10,6 +10,10 @@ impl FilmcraftApp {
 
     pub fn file_dialog(&mut self, id: &str, params: &Value) -> Result<Value, String> {
         match id {
+            "file.importStreams" => self.pick(FileDialog::open_file("Recordings", &["mp4", "mov", "mkv", "webm"]), |app, paths| {
+                let Some(path) = paths.into_iter().next() else { return Ok(Value::Null) };
+                crate::panels::clip_dialogs::open_streams(app, &path)
+            }),
             "file.import" => {
                 let exts: Vec<&str> = filmcraft_media::VIDEO_EXTENSIONS
                     .iter()

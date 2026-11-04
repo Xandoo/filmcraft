@@ -55,7 +55,7 @@ struct MkvAudio {
 pub struct MkvSource {
     info: MediaInfo,
     bytes: crate::Src,
-    file: MkvFile,
+    file: Arc<MkvFile>,
     vtrack: Option<usize>,
     /// Video codec as an ISO-BMFF sample entry (for the decoder factories).
     ventry: Option<SampleEntry>,
@@ -320,7 +320,7 @@ fn color_of(v: &filmcraft_matroska::VideoInfo, w: u32, h: u32, stream: Option<Co
     (crate::stream_color::resolve(w, h, &sources), crate::stream_color::assumed(&sources), explicit)
 }
 
-fn codec_label(c: &Codec) -> String {
+pub(crate) fn codec_label(c: &Codec) -> String {
     match c {
         Codec::Avc { .. } => "H.264".into(),
         Codec::Hevc { .. } => "HEVC".into(),
@@ -361,6 +361,21 @@ fn audio_decodable(c: &Codec) -> bool {
 }
 
 impl MkvSource {
+    pub(crate) fn validate_selected(&self) -> crate::Result<()> {
+        if let Some(entry) = &self.ventry {
+            crate::make_video_decoder(entry)?;
+        } else if self.vtrack.is_some() {
+            return Err(CodecError::Unsupported("Matroska video codec".into()));
+        }
+        for (a, info) in self.audios.iter().zip(&self.info.audio_streams) {
+            let track = self.file.tracks.get(a.track).ok_or_else(|| CodecError::Unsupported("missing audio track".into()))?;
+            if !matches!(track.codec, Codec::Pcm { .. }) {
+                self.audio_decoder(&track.codec, info.sample_rate)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn open(name: &str, bytes: Arc<[u8]>) -> crate::Result<Self> {
         Self::open_reader(name, Arc::new(filmcraft_media::reader::MemReader(bytes)))
     }
@@ -368,8 +383,15 @@ impl MkvSource {
     /// Open from a random-access reader: only the index is read now, samples on demand.
     pub fn open_reader(name: &str, reader: filmcraft_media::SharedReader) -> crate::Result<Self> {
         let bytes = crate::Src(reader);
-        let mut file = filmcraft_matroska::open(&bytes).map_err(|e| CodecError::Container(e.to_string()))?;
-        let vtrack = file.tracks.iter().position(|t| t.kind == TrackKind::Video && !t.samples.is_empty());
+        let file = filmcraft_matroska::open(&bytes).map_err(|e| CodecError::Container(e.to_string()))?;
+        Self::from_index(name, bytes.0.clone(), Arc::new(file), None)
+    }
+
+    pub(crate) fn from_index(name: &str, reader: filmcraft_media::SharedReader, mut file: Arc<MkvFile>, selection: Option<usize>) -> crate::Result<Self> {
+        let bytes = crate::Src(reader);
+        let vtrack = selection
+            .filter(|&i| file.tracks.get(i).is_some_and(|t| t.kind == TrackKind::Video && !t.samples.is_empty()))
+            .or_else(|| if selection.is_none() { file.tracks.iter().position(|t| t.kind == TrackKind::Video && !t.samples.is_empty()) } else { None });
         // every audio track is a stream (the track count comes from the file: capped)
         let atracks: Vec<usize> = file
             .tracks
@@ -377,7 +399,7 @@ impl MkvSource {
             .enumerate()
             // A track whose advertised dimensions are refused is no stream at all, so `atracks[k]` and
             // `info.audio_streams[k]` stay the same track.
-            .filter(|(_, t)| t.kind == TrackKind::Audio && !t.samples.is_empty() && audio_info(t).is_some())
+            .filter(|(i, t)| selection.is_none_or(|k| k == *i) && t.kind == TrackKind::Audio && !t.samples.is_empty() && audio_info(t).is_some())
             .map(|(i, _)| i)
             .take(filmcraft_media::MAX_AUDIO_STREAMS)
             .collect();
@@ -391,8 +413,10 @@ impl MkvSource {
             None => main.and_then(|i| track_end(&file, i)).map(|(end, t)| to_tick(t, end)).unwrap_or_default(),
         };
         // Media time zero is the first picture (or sound): the streams start at their common origin.
-        let origin = media_origin(&file, vtrack, &atracks);
-        rebase(&mut file, origin);
+        let origin = if selection.is_none() { media_origin(&file, vtrack, &atracks) } else { 0 };
+        if origin != 0 {
+            rebase(Arc::make_mut(&mut file), origin);
+        }
         // `Info/Duration` is the Segment's end: the media lasts from the origin to there (never less
         // than its main track's samples).
         let duration = match main.and_then(|i| track_end(&file, i)) {
@@ -483,12 +507,54 @@ impl MkvSource {
                 && t.samples.iter().any(|s| s.addition.is_some())
         });
         let alpha = alpha.map(|t| Arc::new(crate::webm_alpha::AlphaLayer::new(bytes.clone(), t.samples.iter().map(|s| (s.pts, s.addition)))));
-        let snap = vtrack.zip(info.video.as_ref()).is_some_and(|(i, v)| {
-            let t = &file.tracks[i];
-            let (n, d) = tb(t);
-            crate::gop::snap_coarse_units(t.samples.iter().map(|s| s.pts), n, d, v.frame_rate)
-        });
-        Ok(Self { info, bytes, file, vtrack, ventry, video: GopCache::new(explicit_color).with_rotation(rotation), snap, alpha, audios })
+        let snap = selection.is_none()
+            && vtrack.zip(info.video.as_ref()).is_some_and(|(i, v)| {
+                let t = &file.tracks[i];
+                let (n, d) = tb(t);
+                crate::gop::snap_coarse_units(t.samples.iter().map(|s| s.pts), n, d, v.frame_rate)
+            });
+        let mut source = Self { info, bytes, file, vtrack, ventry, video: GopCache::new(explicit_color).with_rotation(rotation), snap, alpha, audios };
+        if selection.is_some() {
+            source.info.duration = source.selected_end()?;
+        }
+        Ok(source)
+    }
+
+    /// Presentation end of the selected track, independent of other tracks' durations.
+    fn selected_end(&self) -> crate::Result<Tick> {
+        if let Some(t) = self.vtrack.and_then(|i| self.file.tracks.get(i)) {
+            let fallback = self.info.frame_rate().frame_duration();
+            return t
+                .samples
+                .iter()
+                .try_fold(None, |end: Option<Tick>, s| {
+                    let duration = if s.duration > 0 {
+                        to_tick(t, i64::try_from(s.duration).map_err(|_| CodecError::Decode("video duration overflow".into()))?)
+                    } else {
+                        fallback
+                    };
+                    let start = to_tick(t, s.pts);
+                    let next = Tick(start.0.checked_add(duration.0).ok_or_else(|| CodecError::Decode("video end overflow".into()))?);
+                    Ok::<_, CodecError>(Some(end.map_or(next, |e| e.max(next))))
+                })?
+                .ok_or_else(|| CodecError::Unsupported("empty video track".into()));
+        }
+        let a = self.audios.first().ok_or_else(|| CodecError::Unsupported("empty audio track".into()))?;
+        let info = self.info.audio().ok_or_else(|| CodecError::Unsupported("missing audio metadata".into()))?;
+        let last = a.starts.len().checked_sub(1).ok_or_else(|| CodecError::Unsupported("empty audio track".into()))?;
+        let mut state = a.state.lock().unwrap_or_else(|e| e.into_inner());
+        let packet = self.audio_packet(a, info, &mut state, last)?;
+        let frames = packet.first().map_or(0, Vec::len);
+        if frames == 0 || info.sample_rate == 0 {
+            return Err(CodecError::Decode("cannot determine selected audio end".into()));
+        }
+        let end = a
+            .starts
+            .get(last)
+            .copied()
+            .and_then(|s| i64::try_from(frames).ok().and_then(|n| s.checked_add(n)))
+            .ok_or_else(|| CodecError::Decode("audio end overflow".into()))?;
+        Ok(Tick::from_rational(end, 1, i64::from(info.sample_rate)))
     }
 
     fn read(&self, track: usize, i: usize) -> crate::Result<Vec<u8>> {

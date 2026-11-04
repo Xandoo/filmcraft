@@ -9,6 +9,8 @@ fn demo_project() -> (Project, ItemId, ItemId) {
         "Ocean_Sunset.mp4",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(Generator::Demo(DemoScene::OceanSunset)),
             info,
             interpret: Default::default(),

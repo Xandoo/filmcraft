@@ -181,13 +181,16 @@ fn preview(s: &mut Session, p: &Value) -> Result<Value> {
 /// Write `samples` as a new WAV and import it (its own undo step; callers collapse history).
 /// `near`: an edit writes next to the narration's previous file unless `dir` is given.
 fn write_and_import(s: &mut Session, p: &Value, samples: &[f32], rate: u32, near: Option<ItemId>) -> Result<(ItemId, String)> {
-    let beside = near.filter(|_| p.get("dir").is_none()).and_then(|i| match &s.project.items.get(&i)?.kind {
-        ItemKind::Media(m) => match &m.media {
-            MediaRef::File { path } => std::path::Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()).map(|d| d.to_string_lossy().into_owned()),
-            MediaRef::Generator(_) => None,
-        },
-        _ => None,
-    });
+    let beside =
+        near.filter(|_| p.get("dir").is_none()).and_then(|i| match &s.project.items.get(&i)?.kind {
+            ItemKind::Media(m) => match &m.media {
+                MediaRef::File { path } => s.media.follow(path).ok().and_then(|resolved| {
+                    std::path::Path::new(&resolved).parent().filter(|d| !d.as_os_str().is_empty()).map(|d| d.to_string_lossy().into_owned())
+                }),
+                MediaRef::Generator(_) => None,
+            },
+            _ => None,
+        });
     let dir = beside.unwrap_or_else(|| crate::voiceover::media_dir(s, p, "Narrations"));
     let path = crate::voiceover::unique_wav_path(s, &dir, BASE_NAME)?;
     if !cfg!(target_arch = "wasm32") {

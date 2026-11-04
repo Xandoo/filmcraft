@@ -916,8 +916,8 @@ fn edit_matching_sequence(s: &mut Session, p: &Value, item: Option<ItemId>, labe
 pub fn import_bytes(s: &mut Session, path: &str, bytes: std::sync::Arc<[u8]>, bin: Option<filmcraft_project::BinId>) -> Result<ItemId> {
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
     let identity = crate::relink::identity_of_bytes(&bytes);
-    let src = s.media.open_bytes(&name, bytes)?;
-    import_source(s, path, name, src, identity, bin)
+    let src = s.media.open_bytes(&name, bytes.clone())?;
+    import_source(s, path, name, src, identity, bin, Some(bytes))
 }
 
 /// Import a media file through the host's random-access reader ([`crate::Services::reader`]):
@@ -926,7 +926,7 @@ pub fn import_streamed(s: &mut Session, path: &str, bin: Option<filmcraft_projec
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
     let identity = crate::relink::identity_of(&*s.services, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let src = s.media.open_file(path, &*s.services)?;
-    import_source(s, path, name, src, identity, bin)
+    import_source(s, path, name, src, identity, bin, None)
 }
 
 /// Import the image sequence that the numbered still `path` starts (File ▸ Import with Image
@@ -939,7 +939,7 @@ pub fn import_image_sequence(s: &mut Session, path: &str, bin: Option<filmcraft_
     let missing: Vec<usize> = frames.iter().enumerate().filter(|(_, f)| f.is_none()).map(|(i, _)| i).collect();
     let src = crate::media_pool::open_image_sequence(path, &*s.services, rate, &name)?;
     let identity = crate::relink::identity_of(&*s.services, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let id = import_source(s, path, name, src, identity, bin)?;
+    let id = import_source(s, path, name, src, identity, bin, None)?;
     Ok((id, frames.len(), missing))
 }
 
@@ -955,7 +955,10 @@ fn import_source(
     src: filmcraft_media::SharedSource,
     identity: filmcraft_project::MediaIdentity,
     bin: Option<filmcraft_project::BinId>,
+    bytes: Option<std::sync::Arc<[u8]>>,
 ) -> Result<ItemId> {
+    s.project.next_id.checked_add(1).ok_or_else(|| bad("file.import", "project identity space exhausted"))?;
+    let (src, recording) = crate::stream_import::prepare_import(s, path, src, bytes)?;
     let mut info = src.info().clone();
     // Settings ▸ Labels ▸ Label Defaults
     let label = s.prefs.labels.for_media(info.kind, info.has_video(), info.has_audio());
@@ -972,6 +975,8 @@ fn import_source(
             &name,
             label,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording,
                 media: MediaRef::File { path: path_s },
                 info,
                 interpret: Default::default(),
@@ -985,7 +990,8 @@ fn import_source(
             bin,
         ))
     })?;
-    s.media.insert_file(id, path, src);
+    let key = s.project.item(id).and_then(|i| i.as_media()).map(crate::media_pool::media_key).ok_or_else(|| bad("file.import", "imported item is missing"))?;
+    s.media.insert_selected_file(id, path, key, src);
     Ok(id)
 }
 
@@ -1185,8 +1191,9 @@ fn place_one(s: &mut Session, p: &Value) -> Result<Value> {
     // sequence never ends between frames (#1101).
     let rate = s.sequence_rate();
     let end = rate.snap_nearest(Tick(at.0.saturating_add(dur.0)));
-    let at = rate.snap_nearest(at);
-    let dur = end - at;
+    let recording = s.project.resolve_media(item).is_some_and(|(_, m, _)| m.recording.is_some());
+    let at = if recording { at } else { rate.snap_nearest(at) };
+    let dur = if recording { dur } else { end - at };
     let ids = place_item(
         s,
         ItemPlacement {
@@ -1276,6 +1283,9 @@ impl Session {
             return (if video { lanes(&q.video_tracks) } else { 0 }, if audio { lanes(&q.audio_tracks) } else { 0 });
         }
         let (has_video, has_audio) = self.project.source_streams(item);
+        let video_lanes = self.project.resolve_media(item).and_then(|(_, m, _)| m.recording.as_ref()).map_or(1, |c| {
+            c.streams.iter().take(filmcraft_media::streams::MAX_CONTAINER_STREAMS).filter(|d| d.kind == filmcraft_media::streams::StreamKind::Video).count()
+        });
         let audio_lanes = if audio && has_audio {
             let media = self.project.resolve_media(item);
             let clips = media.and_then(|(_, m, _)| m.interpret.audio_channels.as_ref()).map(|m| m.clips.clone()).unwrap_or_default();
@@ -1284,7 +1294,7 @@ impl Session {
         } else {
             0
         };
-        (usize::from(video && has_video), audio_lanes)
+        (if video && has_video { video_lanes } else { 0 }, audio_lanes)
     }
 }
 
@@ -1301,6 +1311,9 @@ pub(crate) struct ItemPlacement<'a> {
 }
 
 pub(crate) fn place_item(s: &mut Session, placement: ItemPlacement<'_>) -> Result<Vec<ClipId>> {
+    if s.project.resolve_media(placement.item).is_some_and(|(_, m, _)| m.recording.is_some()) {
+        return crate::recording_placement::place(s, placement);
+    }
     let ItemPlacement { item, range, at, vdest, adest, insert, label, audio_split } = placement;
     let pi = s.project.item(item).ok_or_else(|| bad(label, "no such item"))?.clone();
     // the nest toggle off: a sequence edits in as its clips (a multi-camera source stays one clip)
@@ -1469,7 +1482,39 @@ fn marker_list_mut(s: &mut Session) -> Result<(ItemId, Tick)> {
 fn build() -> Vec<CommandSpec> {
     let mut v = vec![
         // ================= File =================
+        cmd!(
+            "file.createProject",
+            "Create Project",
+            [],
+            None,
+            r#"{"name":str,"parentDirectory":str,"template":"empty|demo"?,"force":bool?}"#,
+            always,
+            crate::project_workspace::create
+        ),
+        cmd!(
+            "file.saveAsProject",
+            "Save As Project Folder",
+            [],
+            None,
+            r#"{"name":str,"parentDirectory":str,"wait":bool?}"#,
+            always,
+            crate::project_workspace::save_as
+        ),
+        query!("file.recentProjects", "Recent Projects", "{}", crate::project_workspace::recent_projects),
+        cmd!("file.removeRecentProject", "Remove from Recents", [], None, r#"{"path":str}"#, always, crate::project_workspace::remove_recent),
+        cmd!("file.locateRecentProject", "Locate Project", [], None, r#"{"previousPath":str,"path":str}"#, always, crate::project_workspace::locate_recent),
+        cmd!(
+            "file.projectSelectionSettings",
+            "Project Selection Settings",
+            [],
+            None,
+            r#"{"listView":bool?,"parentDirectory":str?}"#,
+            always,
+            crate::project_workspace::library_settings
+        ),
         cmd!("file.newProject", "Project…", ["File", "New"], Some("Cmd+Alt+N"), r#"{"name":str}"#, always, |s, p| {
+            s.workspace_adopted_save = None;
+            s.project_closed = false;
             let name = str_p(p, "name").unwrap_or("Untitled").to_string();
             crate::masks::discard_jobs(s);
             s.project = std::sync::Arc::new(filmcraft_project::Project::new(&name));
@@ -1488,6 +1533,8 @@ fn build() -> Vec<CommandSpec> {
             Ok(json!({"name": name, "revision": s.revision}))
         }),
         cmd!("file.openDemoProject", "Demo Project", ["File", "New"], None, "{}", always, |s, _| {
+            s.workspace_adopted_save = None;
+            s.project_closed = false;
             let (p, seq) = crate::demo::demo_project(&s.media);
             s.project = std::sync::Arc::new(p);
             s.project_instance = std::sync::Arc::new(());
@@ -1560,6 +1607,7 @@ fn build() -> Vec<CommandSpec> {
                 if nv > 256 || na > 256 {
                     return Err(bad("file.newSequence", "at most 256 video and 256 audio tracks are supported"));
                 }
+                s.project.next_id.checked_add(1 + u64::from(nv) + u64::from(na)).ok_or_else(|| bad("file.newSequence", "project identity space exhausted"))?;
                 let n = s.project.sequences().count() + 1;
                 let name = str_p(p, "name").map(str::to_string).unwrap_or_else(|| format!("Sequence {n:02}"));
                 let seq_label = s.prefs.labels.defaults.sequence;
@@ -1678,6 +1726,16 @@ fn build() -> Vec<CommandSpec> {
                 Ok(json!({"items": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
             }
         ),
+        query!("media.inspectStreams", "Inspect Recording Streams", r#"{"path":str}"#, crate::stream_import::inspect),
+        cmd!(
+            "file.importStreams",
+            "Import Streams…",
+            ["File"],
+            None,
+            r#"{"path":str,"streams":[streamId],"sequence":itemId?,"at":ticks?}"#,
+            always,
+            crate::stream_import::import
+        ),
         cmd!("file.import", "Import…", ["File"], Some("Cmd+I"), r#"{"paths":[str],"bin":binId?,"imageSequence":bool?,"replace":bool?}"#, always, |s, p| {
             let bin = u64_p(p, "bin").map(filmcraft_project::BinId);
             let paths: Vec<String> = match p.get("paths").and_then(Value::as_array) {
@@ -1758,7 +1816,7 @@ fn build() -> Vec<CommandSpec> {
                     // silently untranscribed (#89)
                     let r = crate::transcript::can_transcribe(s)
                         .map_err(EngineError::Other)
-                        .and_then(|()| s.execute("transcript.generate", json!({"items": audio})));
+                        .and_then(|()| s.execute("transcript.start", json!({"items": audio,"automatic":true})));
                     if let Err(e) = r {
                         errors.push(format!("transcription: {e}"));
                     }
@@ -1936,7 +1994,15 @@ fn build() -> Vec<CommandSpec> {
                 next.set(k, p.get("value").cloned().ok_or_else(|| bad("prefs.set", "need `value`"))?).map_err(|e| bad("prefs.set", e))?;
             }
             if let Some(m) = p.get("values").and_then(Value::as_object) {
+                // Apply the controlling preference before its dependent scroll choice: disabling
+                // fixed mode and selecting Page Scroll in one dialog submission must both stick.
+                if let Some(v) = m.get("timeline.fixedPlayhead") {
+                    next.set("timeline.fixedPlayhead", v.clone()).map_err(|e| bad("prefs.set", e))?;
+                }
                 for (k, v) in m {
+                    if k == "timeline.fixedPlayhead" {
+                        continue;
+                    }
                     next.set(k, v.clone()).map_err(|e| bad("prefs.set", e))?;
                 }
             }
@@ -2542,6 +2608,19 @@ fn build() -> Vec<CommandSpec> {
             let tab = s.state.open_sequences.remove(from);
             s.state.open_sequences.insert(to, tab);
             Ok(json!({"index": to}))
+        }),
+        cmd!("sequence.cutAtPlayhead", "Cut at Playhead", ["Sequence"], Some("Shift+C"), "{}", has_seq, |s, _| {
+            let t = s.playhead();
+            let selected = !s.state.selection.is_empty();
+            let clips = with_links(s, &s.state.selection);
+            let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+            let any = q.all_tracks().any(|tr| !tr.locked && tr.items.iter().any(|it| it.start < t && t < it.end() && (!selected || clips.contains(&it.id))));
+            if !any {
+                return Ok(json!({"cuts": 0}));
+            }
+            let n =
+                s.edit_sequence("Cut at Playhead", |q, ctx, _| Ok(if selected { edit::razor_items(q, &clips, t, ctx) } else { edit::razor(q, &[], t, ctx) }))?;
+            Ok(json!({"cuts": n.len()}))
         }),
         cmd!("sequence.addEdit", "Add Edit", ["Sequence"], Some("Cmd+K"), r#"{"time":ticks?}"#, has_seq, |s, p| {
             let t = time_p(s, p, "").unwrap_or(s.playhead());
@@ -3844,6 +3923,15 @@ fn build() -> Vec<CommandSpec> {
             has_seq,
             |s, p| keyframe_op(s, p, "set")
         ),
+        cmd!(
+            "effects.editKeyframes",
+            "Edit Keyframes",
+            [],
+            None,
+            r#"{"edits":[{"key":{"clip":id,"effect":index,"param":str,"mask":n?,"time":mediaTicks},"operation":"set|put|delete","value":any?,"keyframe":object?,"inTangents":[number]?,"outTangents":[number]?,"inInfluence":number?,"outInfluence":number?,"tangentsLinked":bool?}]}"#,
+            has_seq,
+            crate::keyframe_move::edit_many
+        ),
         // ================= Project panel =================
         cmd!("project.select", "Select Project Items", [], None, r#"{"items":[id]}"#, always, |s, p| {
             s.state.project_selection =
@@ -4092,7 +4180,7 @@ fn reset_params(e: &mut filmcraft_project::EffectInstance, only: Option<&str>, f
 /// The `interpolation` parameter; a missing or unknown name is linear.
 pub(crate) fn interpolation_p(p: &Value) -> filmcraft_project::Interpolation {
     match str_p(p, "interpolation").unwrap_or("linear").to_ascii_lowercase().as_str() {
-        "bezier" => filmcraft_project::Interpolation::Bezier,
+        "bezier" | "easeinout" => filmcraft_project::Interpolation::Bezier,
         "autobezier" => filmcraft_project::Interpolation::AutoBezier,
         "continuousbezier" => filmcraft_project::Interpolation::ContinuousBezier,
         "hold" => filmcraft_project::Interpolation::Hold,
@@ -4169,6 +4257,7 @@ fn keyframe_op(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
             "set" => {
                 let at = mtime.ok_or_else(|| bad("keyframe", "need `mediaTime`"))?;
                 let k = prm.keyframes.iter_mut().find(|k| k.time == at).ok_or_else(|| bad("keyframe", "no keyframe at that time"))?;
+                crate::keyframe_move::set_fields(k, p)?;
                 if let Some(v) = p.get("value") {
                     k.value = json_to_param(&k.value, v).ok_or_else(|| bad("keyframe", "value has the wrong type"))?;
                 }
@@ -5151,16 +5240,12 @@ fn name_project(p: &mut filmcraft_project::Project, name: String) {
 
 fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
     let t0 = web_time::Instant::now();
-    // Save As renames the project after its new file (not an edit: no undo step, not dirty).
-    if adopt
-        && let Some(name) = project_name_for(path)
-        && s.project.name != name
-    {
-        name_project(std::sync::Arc::make_mut(&mut s.project), name);
+    let mut saved_project = crate::project_workspace::for_document(&s.project, s.path.as_deref(), path);
+    if adopt && let Some(name) = project_name_for(path) {
+        name_project(&mut saved_project, name);
     }
-    // what is open (sequence tabs, how each is shown) goes into the file beside the project
     let view = s.project_view();
-    let bytes = filmcraft_format::encode_with_view(&s.project, Some(&view), false);
+    let bytes = filmcraft_format::encode_with_view(&saved_project, Some(&view), false);
     let mut backup = None;
     if adopt && s.path.as_deref() == Some(path) && s.loaded_schema < filmcraft_format::SCHEMA_VERSION {
         let b = schema_backup_path(path, s.loaded_schema);
@@ -5173,11 +5258,38 @@ fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
     }
     s.services.write_file(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     if adopt {
+        s.workspace_adopted_save = None;
+        if s.project_closed {
+            s.project_closed = false;
+            s.document_epoch = s.document_epoch.wrapping_add(1);
+            s.project_instance = std::sync::Arc::new(());
+        }
+        crate::project_workspace::remember_access(s);
+        if let Some(name) = project_name_for(path) {
+            name_project(std::sync::Arc::make_mut(&mut s.project), name);
+        }
+        // Keep runtime references anchored to the old document when adopting another path.
+        let selected_paths = s.media.selected_paths(&s.project);
+        let old_path = s.path.clone();
+        crate::project_workspace::map_paths(std::sync::Arc::make_mut(&mut s.project), |stored| {
+            craft_docpath::resolve(stored, old_path.as_deref().or(Some(path)).map(std::path::Path::new))
+                .ok()
+                .and_then(|p| std::path::absolute(p).ok())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| stored.to_string())
+        });
         s.path = Some(path.to_string());
+        s.media.add_stored(&s.project, s.path.as_deref());
+        for path in selected_paths {
+            let absolute = std::path::absolute(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or(path);
+            s.media.allow(&absolute);
+        }
+        crate::project_workspace::restore_access(s);
         s.previews_follow_path();
         s.note_recent_project();
         s.saved_revision = s.revision;
         s.loaded_schema = filmcraft_format::SCHEMA_VERSION;
+        crate::project_workspace::saved(s);
     }
     Ok(json!({"path": path, "bytes": bytes.len(), "ms": t0.elapsed().as_secs_f64() * 1000.0, "backup": backup}))
 }
@@ -5188,7 +5300,18 @@ fn schema_backup_path(path: &str, schema: u32) -> String {
 }
 
 /// Make `proj` the session's project (fresh history, media pool and editor state).
-pub(crate) fn install_project(s: &mut Session, proj: filmcraft_project::Project, path: Option<String>, clean: bool) {
+pub(crate) fn install_project(s: &mut Session, mut proj: filmcraft_project::Project, path: Option<String>, clean: bool) {
+    // Disk paths are relative for portability; runtime paths are absolute so undo, generated
+    // media, inspection and subsequent saves all retain the same reference after a reopen.
+    if let Some(document) = path.as_deref() {
+        crate::project_workspace::map_paths(&mut proj, |stored| {
+            crate::project_workspace::absolute_reference(stored, Some(document))
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| stored.to_string())
+        });
+    }
+    s.workspace_adopted_save = None;
+    s.project_closed = false;
     let proxies = s.media.use_proxies();
     s.media = std::sync::Arc::new(crate::MediaPool::default());
     s.media.set_use_proxies(proxies);
@@ -5230,6 +5353,7 @@ fn open_project(s: &mut Session, path: &str) -> Result<Value> {
     if let Some(seq) = s.state.active_sequence {
         s.events.push(crate::Event::OpenSequence(seq));
     }
+    crate::project_workspace::restore_access(s);
     s.note_recent_project();
     s.loaded_schema = from;
     if migrated {
@@ -5250,6 +5374,7 @@ fn recover(s: &mut Session, id: Option<&str>) -> Result<Value> {
     let saved_at = per.local_time(c.meta.saved_unix);
     let loaded = crate::autosave::load_candidate(&c).map_err(EngineError::Other)?;
     install_project(s, loaded.project, c.meta.project_path.clone(), false);
+    crate::project_workspace::restore_access(s);
     if let Some(seq) = s.state.active_sequence {
         s.events.push(crate::Event::OpenSequence(seq));
     }

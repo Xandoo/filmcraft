@@ -105,6 +105,35 @@ impl Driver {
     }
 }
 
+#[test]
+fn transcript_editable_text_dialog_creates_graphics_and_exposes_settings() {
+    let mut d = Driver::demo();
+    let clip = d.harness.state().session.active_sequence().unwrap().audio_tracks[0].items[0].clone();
+    let item = clip.item;
+    let offset = clip.source_in.0;
+    d.exec(
+        "transcript.set",
+        json!({"item":item.0,"transcript":{"words":[
+        {"text":"Hello","start":offset + 25401600000i64,"end":offset + 101606400000i64},
+        {"text":"world","start":offset + 127008000000i64,"end":offset + 203212800000i64}
+        ]}}),
+    );
+    d.ok("ui.set", json!({"transcriptOutput":{"options":{"grouping":"words","maxWords":1}}}));
+    d.menu("transcript.createText");
+    assert!(d.has("transcription.text.grouping"));
+    assert!(d.has("transcription.text.maxWords"));
+    assert!(d.has("transcription.text.pauseSeconds"));
+    d.shot("transcript-text");
+    d.click("createText.ok");
+    let session = &d.harness.state().session;
+    let track = session.active_sequence().unwrap().video_tracks.last().unwrap();
+    assert_eq!(track.name, "Transcript Text");
+    assert_eq!(track.items.len(), 2);
+    assert!(track.items.iter().all(|it| it.effects.iter().any(|e| e.effect == "graphic_text")));
+    d.exec("playhead.set", json!({"time":clip.start.0 + 50803200000i64}));
+    d.shot("transcript-graphics");
+}
+
 const CATEGORIES: [&str; 16] = [
     "general",
     "appearance",
@@ -123,6 +152,33 @@ const CATEGORIES: [&str; 16] = [
     "timeline",
     "trim",
 ];
+
+#[test]
+fn fixed_playhead_locks_smooth_scroll_in_timeline_preferences() {
+    let mut d = Driver::demo();
+    d.menu("app.settings.timeline");
+    d.click("settings.timeline.fixedPlayhead");
+    assert_eq!(d.draft()["values"]["timeline"]["autoScroll"], "smoothScroll");
+    d.click("settings.timeline.autoScroll");
+    assert!(!d.has("settings.timeline.autoScroll.pageScroll"), "disabled dropdown does not open");
+    d.shot("fixed-playhead");
+    d.click("settings.cancel");
+    assert_eq!(d.pref("timeline.fixedPlayhead"), false);
+    assert_eq!(d.pref("timeline.autoScroll"), "pageScroll");
+    d.menu("app.settings.timeline");
+    d.click("settings.timeline.fixedPlayhead");
+    d.click("settings.ok");
+    assert_eq!(d.pref("timeline.fixedPlayhead"), true);
+    assert_eq!(d.pref("timeline.autoScroll"), "smoothScroll");
+    assert!(d.harness.state().ui.timeline.fixed_playhead);
+    d.menu("app.settings.timeline");
+    d.click("settings.timeline.fixedPlayhead");
+    d.click("settings.timeline.autoScroll");
+    d.click("settings.timeline.autoScroll.pageScroll");
+    d.click("settings.ok");
+    assert_eq!(d.pref("timeline.autoScroll"), "pageScroll");
+    assert!(!d.harness.state().ui.timeline.fixed_playhead);
+}
 
 #[test]
 fn every_category_opens_from_its_command_and_menu() {

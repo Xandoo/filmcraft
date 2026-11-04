@@ -28,7 +28,8 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     let v = &mut app.ui.timeline;
     let vis = bar.width() as f64 / v.pps;
     let total = timeline_extent(seq_seconds).max(vis);
-    let (left, w, per_point) = zoom_thumb(bar, seq_seconds, v.scroll, v.pps);
+    let padding = if v.fixed_playhead { super::fixed_anchor(v.playhead_anchor, bar.width()) as f64 / v.pps } else { 0.0 };
+    let (left, w, per_point) = zoom_thumb(bar, seq_seconds, v.scroll + padding, v.pps);
     let thumb = Rect::from_min_max(pos2(left, bar.min.y), pos2(left + w, bar.max.y));
     let hover = ui.rect_contains_pointer(thumb);
     p.rect_filled(thumb, thumb.height() / 2.0, if hover { t.scroll_thumb_hover } else { t.scroll_thumb });
@@ -44,7 +45,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     // from there)
     let jump = |v: &mut crate::state::TimelineView, x: f32| {
         if per_point > 0.0 {
-            v.target_scroll = ((x - bar.min.x - w / 2.0) as f64 * per_point).clamp(0.0, range);
+            v.target_scroll = ((x - bar.min.x - w / 2.0) as f64 * per_point).clamp(0.0, range) - padding;
             v.scroll = v.target_scroll;
         }
     };
@@ -87,7 +88,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             // the thumb's middle: scroll, the thumb staying under the pointer
             0 => {
                 if let Some(pos) = resp.interact_pointer_pos() {
-                    v.target_scroll = (start + (pos.x - grab) as f64 * per_point).clamp(0.0, range);
+                    v.target_scroll = (start + (pos.x - grab) as f64 * per_point).clamp(-padding, range - padding);
                     v.scroll = v.target_scroll;
                 }
             }

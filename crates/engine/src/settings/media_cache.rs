@@ -169,11 +169,16 @@ impl Session {
     /// Note a project file as the most recent one (General ▸ At Startup ▸ Open Most Recent).
     pub fn note_recent_project(&mut self) {
         let Some(p) = self.path.clone() else { return };
+        crate::project_workspace::remember_access(self);
         if self.prefs.general.recent_projects.first() == Some(&p) {
+            crate::project_workspace::note_recent(self);
             return;
         }
         let mut next = self.prefs.clone();
         next.note_recent(&p);
-        let _ = self.set_prefs(next);
+        if let Err(e) = self.set_prefs(next) {
+            self.toast(format!("Could not remember recent project: {e}"));
+        }
+        crate::project_workspace::note_recent(self);
     }
 }

@@ -661,6 +661,8 @@ fn preview_item(
                     name: e.name.clone(),
                     label: Label::Iris,
                     kind: ItemKind::Media(Box::new(MediaClip {
+                        stream: None,
+                        recording: None,
                         media: MediaRef::File { path: e.path.clone() },
                         info: info.clone(),
                         interpret: Default::default(),

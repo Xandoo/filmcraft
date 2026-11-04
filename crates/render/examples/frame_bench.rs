@@ -94,6 +94,8 @@ fn project(layers: &[Arc<VideoFrame>]) -> (Project, filmcraft_project::ItemId, S
             &format!("layer{track}"),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(g.generator.clone()),
                 info: info.clone(),
                 interpret: Default::default(),

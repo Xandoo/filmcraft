@@ -49,7 +49,15 @@ pub struct OfflineMedia {
     pub error: String,
 }
 
+struct IndexedRecording {
+    path: String,
+    identity: filmcraft_project::MediaIdentity,
+    recording: Arc<filmcraft_codecs::streams::Recording>,
+}
+
 pub struct MediaPool {
+    // Only the most recently opened recording is retained; its stream views share the index.
+    recording: RwLock<Option<IndexedRecording>>,
     /// item → (reference key, source)
     sources: RwLock<HashMap<ItemId, (String, SharedSource)>>,
     proxies: RwLock<HashMap<ItemId, (String, SharedSource)>>,
@@ -68,6 +76,7 @@ impl Default for MediaPool {
     /// A pool with the built-in container/codec openers registered.
     fn default() -> Self {
         Self {
+            recording: RwLock::new(None),
             sources: RwLock::new(HashMap::new()),
             proxies: RwLock::new(HashMap::new()),
             offline: Arc::new(RwLock::new(HashMap::new())),
@@ -89,7 +98,13 @@ pub const PROBE_WHOLE_FILE_MAX: u64 = 64 * 1024 * 1024;
 pub fn media_key(m: &MediaClip) -> String {
     match &m.media {
         MediaRef::File { path } if m.offline => format!("offline:{path}"),
-        MediaRef::File { path } => format!("file:{path}"),
+        MediaRef::File { path } => match &m.stream {
+            Some(id) => format!("file:{path}:stream:{id:?}"),
+            None if m.recording.is_some() => {
+                format!("file:{path}:recording:{:?}", m.recording.as_ref().map(|c| c.streams.iter().map(|d| &d.id).collect::<Vec<_>>()))
+            }
+            None => format!("file:{path}"),
+        },
         MediaRef::Generator(g) => format!("generator:{g:?}"),
     }
 }
@@ -149,6 +164,62 @@ fn file_name(path: &str) -> String {
 }
 
 impl MediaPool {
+    pub fn open_media(&self, path: &str, media: &MediaClip, services: &dyn Services) -> Result<SharedSource, MediaError> {
+        if media.recording.is_some() && media.stream.is_some() {
+            return Err(MediaError::Decode("conflicting recording and stream selections".into()));
+        }
+        match &media.recording {
+            Some(catalog) => self.recording(path, services)?.combined(catalog),
+            None => self.open_selected(path, media.stream.as_ref(), services),
+        }
+    }
+    /// Open an explicit selection without ever substituting the default stream.
+    pub fn open_selected(
+        &self,
+        path: &str,
+        selection: Option<&filmcraft_media::streams::StreamId>,
+        services: &dyn Services,
+    ) -> Result<SharedSource, MediaError> {
+        match selection {
+            None => self.open_file(path, services),
+            Some(id) => self.recording(path, services)?.select(id),
+        }
+    }
+
+    pub fn recording(&self, path: &str, services: &dyn Services) -> Result<Arc<filmcraft_codecs::streams::Recording>, MediaError> {
+        let available_reader = services.reader(path);
+        if available_reader.is_none() && services.file_size(path).map_err(|e| MediaError::Io(e.to_string()))? > PROBE_WHOLE_FILE_MAX {
+            return Err(MediaError::Unsupported("stream import needs random-access file reading above 64 MiB".into()));
+        }
+        let identity = crate::relink::identity_of(services, path).map_err(|e| MediaError::Io(e.to_string()))?;
+        if let Some(cached) = self.recording.read().unwrap_or_else(PoisonError::into_inner).as_ref()
+            && cached.path == path
+            && cached.identity == identity
+        {
+            return Ok(cached.recording.clone());
+        }
+        let reader = match available_reader {
+            Some(r) => r.map_err(|e| MediaError::Io(e.to_string()))?,
+            None => {
+                let size = services.file_size(path).map_err(|e| MediaError::Io(e.to_string()))?;
+                if size > PROBE_WHOLE_FILE_MAX {
+                    return Err(MediaError::Unsupported("stream import needs random-access file reading above 64 MiB".into()));
+                }
+                Arc::new(filmcraft_media::reader::MemReader(services.read_file(path).map_err(|e| MediaError::Io(e.to_string()))?.into()))
+            }
+        };
+        let recording = Arc::new(filmcraft_codecs::streams::Recording::open(reader)?);
+        let mut cache = self.recording.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(cached) = cache.as_ref()
+            && cached.path == path
+            && cached.identity == identity
+        {
+            return Ok(cached.recording.clone());
+        }
+        *cache = Some(IndexedRecording { path: path.to_string(), identity, recording: recording.clone() });
+        Ok(recording)
+    }
+
     pub fn register_opener(&self, o: Opener) {
         self.openers.write().unwrap_or_else(PoisonError::into_inner).push(o);
     }
@@ -165,9 +236,14 @@ impl MediaPool {
 
     /// Cache a source opened from `path` for an item.
     pub fn insert_file(&self, item: ItemId, path: &str, src: SharedSource) {
+        self.insert_selected_file(item, path, format!("file:{path}"), src);
+    }
+
+    /// Install a file view under its complete reference key, clearing stale offline state.
+    pub fn insert_selected_file(&self, item: ItemId, path: &str, key: String, src: SharedSource) {
         self.offline.write().unwrap_or_else(PoisonError::into_inner).remove(&item);
         let src = self.unsupported_as_slate(item, path, src);
-        self.sources.write().unwrap_or_else(PoisonError::into_inner).insert(item, (format!("file:{path}"), src));
+        self.sources.write().unwrap_or_else(PoisonError::into_inner).insert(item, (key, src));
     }
 
     /// `src` (opened from `path` for `item`) showing the unreadable slate for the frames it
@@ -204,6 +280,21 @@ impl MediaPool {
     }
 
     /// Forget the stored paths (a new project).
+    pub(crate) fn selected_paths(&self, project: &Project) -> Vec<String> {
+        let stored = self.stored.read().unwrap_or_else(PoisonError::into_inner);
+        project
+            .items
+            .values()
+            .filter_map(|i| i.as_media())
+            .flat_map(|m| [Some(&m.media), m.proxy.as_ref()])
+            .flatten()
+            .filter_map(|r| match r {
+                MediaRef::File { path } if !stored.contains_key(path) => Some(path.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn clear_stored(&self) {
         self.stored.write().unwrap_or_else(PoisonError::into_inner).clear();
     }
@@ -315,6 +406,8 @@ impl MediaPool {
         let (item, m, _) = p.resolve_media(item)?;
         let it = p.item(item)?;
         if proxies
+            && m.stream.is_none()
+            && m.recording.is_none()
             && !m.offline
             && let Some(MediaRef::File { path }) = &m.proxy
             && let Some(s) = self.proxy_source(item, path, m, services)
@@ -341,7 +434,7 @@ impl MediaPool {
                 if m.info.kind == filmcraft_media::MediaKind::ImageSequence {
                     open_image_sequence(&file, services, m.info.frame_rate(), &it.name)
                 } else {
-                    self.open_file(&file, services)
+                    self.open_media(&file, m, services)
                 }
             }) {
                 Ok(s) => {
@@ -378,8 +471,14 @@ impl MediaPool {
         }
         let file = self.follow_media(path).ok()?;
         let reader = services.reader(&file)?.ok()?;
-        let openers = self.openers.read().unwrap_or_else(PoisonError::into_inner).clone();
-        let src = filmcraft_media::reader::open_reader_within(&file_name(&file), reader, &filmcraft_codecs::reader_openers(), &openers, 0).ok()?;
+        let src = if let Some(catalog) = &m.recording {
+            self.recording(&file, services).and_then(|r| r.combined(catalog)).ok()?
+        } else if let Some(id) = &m.stream {
+            self.recording(&file, services).and_then(|r| r.select(id)).ok()?
+        } else {
+            let openers = self.openers.read().unwrap_or_else(PoisonError::into_inner).clone();
+            filmcraft_media::reader::open_reader_within(&file_name(&file), reader, &filmcraft_codecs::reader_openers(), &openers, 0).ok()?
+        };
         Some(self.unsupported_as_slate(item, path, src))
     }
 

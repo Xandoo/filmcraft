@@ -51,6 +51,7 @@ fn push(elems: &mut Elems, id: impl Into<String>, r: &egui::Response, label: imp
 /// Dialog title and automation prefix of a command's dialog.
 fn meta(command: &str) -> Option<(&'static str, &'static str)> {
     Some(match command {
+        "file.importStreams" => (tl!("Import Streams"), "importStreams"),
         "edit.pasteAttributes" => (tl!("Paste Attributes"), "pasteAttributes"),
         "edit.removeAttributes" => (tl!("Remove Attributes"), "removeAttributes"),
         "file.newOfflineFile" => (tl!("New Offline File"), "offlineFile"),
@@ -112,6 +113,12 @@ fn rename_target(app: &FilmcraftApp) -> Option<Value> {
 
 /// Menu / shortcut entry points without params open a dialog. Returns None for other ids.
 pub fn route(app: &mut FilmcraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == "file.importStreams" && params.get("streams").is_none() {
+        return Some(match params.get("path").and_then(Value::as_str) {
+            Some(path) => open_streams(app, path),
+            None => app.file_dialog(id, params),
+        });
+    }
     // Open Recent, the Home screen and a dropped project file ask before replacing unsaved
     // changes; File ▸ Open without a path picks the file first (see `ask_before_open`)
     if id == "file.open" {
@@ -157,6 +164,18 @@ pub fn ask_before_open(app: &mut FilmcraftApp, path: &str) -> Option<Result<Valu
     }
     app.ui.clip_dialog = Some(ClipDialogDraft { command: "file.open".into(), params: json!({"path": path}), info: Value::Null, error: String::new() });
     Some(Ok(json!({"dialog": "openProject"})))
+}
+
+/// Inspect a recording before presenting an opt-in stream selection. No project mutation.
+pub fn open_streams(app: &mut FilmcraftApp, path: &str) -> Result<Value, String> {
+    let catalog = app.session.execute("media.inspectStreams", json!({"path":path})).map_err(|e| e.to_string())?;
+    let selected: Vec<Value> = catalog["streams"].as_array().into_iter().flatten().filter(|s| s["unsupported"].is_null()).map(|s| s["id"].clone()).collect();
+    let mut params = json!({"path":path,"streams":selected,"at":app.session.playhead().0});
+    if let Some(id) = app.session.state.active_sequence {
+        params["sequence"] = json!(id.0);
+    }
+    app.ui.clip_dialog = Some(ClipDialogDraft { command: "file.importStreams".into(), params, info: catalog, error: String::new() });
+    Ok(json!({"dialog":"importStreams"}))
 }
 
 /// A request to close the window (Quit, the title bar's close button, the OS): with unsaved
@@ -209,6 +228,7 @@ fn defaults(app: &FilmcraftApp, id: &str) -> (Value, Value) {
                 "effects": names.iter().map(|n| n.0.clone()).collect::<Vec<_>>()});
             if id == "edit.pasteAttributes" {
                 p["scaleTimes"] = json!(true);
+                p["textMotion"] = json!(false);
             }
             (p, json!({"video": has_v, "audio": has_a, "effects": names}))
         }
@@ -360,8 +380,13 @@ fn frames(ui: &mut egui::Ui, elems: &mut Elems, pre: &str, p: &mut Value, key: &
 /// Draw the open dialog, if any.
 pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.clip_dialog.clone() else { return };
+    if d.command == "file.importStreams" && !d.params.is_object() {
+        d.params = json!({});
+        d.error = "Invalid stream import parameters; cancel and choose the recording again.".into();
+    }
     crate::widgets::revert_drag_on_escape(ctx, egui::Id::unique("clip-dialog-before-drag"), &mut d);
-    let Some((title, pre)) = meta(&d.command) else {
+    let details = if d.command == "file.createProject" { Some((tl!("Save Project"), "createProject")) } else { meta(&d.command) };
+    let Some((title, pre)) = details else {
         app.ui.clip_dialog = None;
         return;
     };
@@ -369,13 +394,52 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let mut action: Option<&'static str> = None;
     let project_name = app.session.project.name.clone();
     // a never-saved project is saved through the Save dialog
-    let can_save = app.session.path.is_some() || crate::native_dialogs::FileDialog::SaveProject { name: String::new() }.available(&app.hooks);
+    let can_save = app.project_selection_runtime.enabled
+        || app.session.path.is_some()
+        || crate::native_dialogs::FileDialog::SaveProject { name: String::new() }.available(&app.hooks);
     // the title is translated; the window keeps one id whatever the interface language
     let id = egui::Id::unique(("clip-dialog", pre));
-    egui::Window::new(title).id(id).collapsible(false).resizable(false).default_width(360.0).centered(ctx).show(ctx, |ui| {
+    let width = if d.command == "file.importStreams" { 640.0 } else { 360.0 };
+    egui::Window::new(title).id(id).collapsible(false).resizable(false).default_width(width).centered(ctx).show(ctx, |ui| {
         let p = &mut d.params;
         let mut valid = true;
         match d.command.as_str() {
+            "file.importStreams" => {
+                ui.label(tl!("Choose streams to place on separate, synchronized tracks."));
+                ui.label(p["path"].as_str().unwrap_or_default());
+                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    for (i, stream) in d.info["streams"].as_array().into_iter().flatten().take(filmcraft_media::streams::MAX_CONTAINER_STREAMS).enumerate() {
+                        let id = &stream["id"];
+                        let mut selected = p["streams"].as_array().is_some_and(|a| a.contains(id));
+                        let supported = stream["unsupported"].is_null();
+                        let name = stream["name"].as_str().filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(|| format!("Stream {}", i + 1));
+                        let details = if let Some(v) = stream.get("video").filter(|v| !v.is_null()) {
+                            let rate =
+                                serde_json::from_value::<filmcraft_time::FrameRate>(v["frame_rate"].clone()).map(|r| r.sane().label()).unwrap_or_default();
+                            format!("{} × {} · {} fps · {}", v["width"], v["height"], rate, v["codec"].as_str().unwrap_or_default())
+                        } else if let Some(a) = stream.get("audio").filter(|a| !a.is_null()) {
+                            format!("{} Hz · {} channels · {}", a["sample_rate"], a["channels"], a["codec"].as_str().unwrap_or_default())
+                        } else {
+                            format!("{} · {}", stream["kind"].as_str().unwrap_or_default(), stream["codec"].as_str().unwrap_or_default())
+                        };
+                        let start = stream["start"].as_i64().map(filmcraft_time::Tick).unwrap_or_default().seconds();
+                        let r = ui.add_enabled(supported, egui::Checkbox::new(&mut selected, format!("{name} — {details} · {start:.3} s")));
+                        push(&mut elems, format!("{pre}.stream.{i}"), &r, &name);
+                        if r.changed() {
+                            let mut list: Vec<Value> =
+                                p["streams"].as_array().into_iter().flatten().take(filmcraft_media::streams::MAX_CONTAINER_STREAMS).cloned().collect();
+                            list.retain(|v| v != id);
+                            if selected {
+                                list.push(id.clone());
+                            }
+                            p["streams"] = Value::Array(list);
+                        }
+                        if let Some(reason) = stream["unsupported"].as_str() {
+                            ui.label(RichText::new(reason).weak());
+                        }
+                    }
+                });
+            }
             "edit.pasteAttributes" | "edit.removeAttributes" => {
                 let (v, a) = (d.info["video"].as_bool().unwrap_or(true), d.info["audio"].as_bool().unwrap_or(true));
                 // a ticked box means "remove", not "keep on" (#3789: an effect was unticked to turn it off)
@@ -384,14 +448,26 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                     let r = ui.label(RichText::new(hint).weak());
                     push(&mut elems, format!("{pre}.hint"), &r, hint);
                 }
-                ui.label(RichText::new(tl!("Video Attributes")).strong());
-                for (k, l) in intrinsic_video() {
-                    check(ui, &mut elems, pre, p, k, l, v);
-                }
-                ui.label(RichText::new(tl!("Audio Attributes")).strong());
-                for (k, l) in intrinsic_audio() {
-                    check(ui, &mut elems, pre, p, k, l, a);
-                }
+                egui::Grid::new("attribute-choices").num_columns(2).spacing([28.0, 8.0]).show(ui, |ui| {
+                    ui.label(RichText::new(tl!("Video Attributes")).strong());
+                    ui.label(RichText::new(tl!("Audio Attributes")).strong());
+                    ui.end_row();
+                    for ((k, l), (ak, al)) in intrinsic_video().into_iter().zip(intrinsic_audio()) {
+                        check(ui, &mut elems, pre, p, k, l, v);
+                        check(ui, &mut elems, pre, p, ak, al, a);
+                        ui.end_row();
+                    }
+                    if d.command == "edit.pasteAttributes" {
+                        ui.end_row();
+                        for (i, (key, label, _)) in filmcraft_engine::graphics::TEXT_ATTRIBUTE_GROUPS.iter().enumerate() {
+                            check(ui, &mut elems, pre, p, key, crate::i18n::t(label), v);
+                            if i % 2 == 1 {
+                                ui.end_row();
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
                 let effects: Vec<(String, String)> = d.info["effects"]
                     .as_array()
                     .map(|x| x.iter().filter_map(|e| Some((e[0].as_str()?.to_string(), e[1].as_str()?.to_string()))).collect())
@@ -642,7 +718,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                     }
                 }
             }
-            "file.closeProject" | "app.quit" | "file.open" => {
+            "file.closeProject" | "app.quit" | "file.open" | "file.createProject" => {
                 ui.label(tlf!("Save changes to “{project_name}” before closing?", project_name));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -691,7 +767,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     }
     if action.is_none()
         && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.pointer.any_down())
-        && !matches!(d.command.as_str(), "file.closeProject" | "app.quit" | "file.open")
+        && !matches!(d.command.as_str(), "file.closeProject" | "app.quit" | "file.open" | "file.createProject")
     {
         action = Some("ok");
     }
@@ -728,6 +804,12 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                     return;
                 }
                 leave(app, ctx, &d);
+                return;
+            }
+            if app.project_selection_runtime.enabled && !cfg!(target_arch = "wasm32") {
+                app.project_selection_runtime.after_save = Some(d.clone());
+                app.ui.clip_dialog = None;
+                crate::project_selection::begin(app, "empty", true);
                 return;
             }
             // A new project: Save As, then go on once it is saved. The host's dialog may answer
@@ -779,7 +861,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
 
 /// Go on after the unsaved-changes prompt (Don't Save, or Save once it saved): close the project,
 /// then for Quit close the window; for Open open the chosen project instead of closing.
-fn leave(app: &mut FilmcraftApp, ctx: &egui::Context, prompt: &ClipDialogDraft) {
+pub(crate) fn leave(app: &mut FilmcraftApp, ctx: &egui::Context, prompt: &ClipDialogDraft) {
     let command = prompt.command.as_str();
     // Quit ▸ Don't Save discards the changes: closing the project also clears their recovery
     // snapshot, so the next launch doesn't offer them back. Open replaces the project only once
@@ -793,6 +875,14 @@ fn leave(app: &mut FilmcraftApp, ctx: &egui::Context, prompt: &ClipDialogDraft) 
     if command == "app.quit" {
         app.quit_confirmed = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+    if command == "file.createProject" {
+        let mut params = prompt.params.clone();
+        params["force"] = json!(true);
+        if let Err(e) = app.session.execute(command, params) {
+            app.ui.status = e.to_string();
+            app.ui.clip_dialog = Some(prompt.clone());
+        }
     }
     if command == "file.open"
         && let Some(path) = prompt.params["path"].as_str()

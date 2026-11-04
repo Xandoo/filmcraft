@@ -14,7 +14,7 @@ use crate::theme::Tokens;
 use crate::widgets::HotNumberOptions;
 
 #[path = "effect_controls_selection.rs"]
-mod selection;
+pub(crate) mod selection;
 pub(crate) use selection::Interaction;
 
 const ROW_H: f32 = 22.0;
@@ -36,7 +36,7 @@ const PROPS_NAV_X: f32 = 26.0;
 const PROPS_VALUE_R: f32 = PROPS_NAV_X + NAV_STEP + 12.0;
 
 /// Timeline time at which the clip shows media time `m` (where a keyframe sits in the sequence).
-fn timeline_time_of(it: &TrackItem, m: Tick) -> Tick {
+pub(crate) fn timeline_time_of(it: &TrackItem, m: Tick) -> Tick {
     let offset = if it.reverse { it.source_out() - m - Tick(1) } else { m - it.source_in };
     it.start + Tick((offset.0 as f64 / it.speed.abs().max(1e-6)).round() as i64)
 }
@@ -167,8 +167,8 @@ fn drop_effect(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, clips: &[(
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let clips = selected_clips(app);
-    // keep only selected keyframes that still exist on a clip shown here
-    app.ui.keyframe_selection.retain(|k| clips.iter().any(|(c, it, _)| c.0 == k.clip && keyframe_exists(it, k)));
+    // Other animation panels share selection, including keys on additional selected clips.
+    app.ui.keyframe_selection.retain(|k| app.session.active_sequence().and_then(|q| q.find_item(ClipId(k.clip))).is_some_and(|(_, it)| keyframe_exists(it, k)));
     let Some((clip, it, _)) = clips.first().cloned() else {
         // a transition clicked in the Timeline (#430)
         if let Some(id) = crate::panels::transition_controls::selected(app) {

@@ -211,6 +211,11 @@ fn wants_effect(sel: &AttrSel, e: &filmcraft_project::EffectInstance) -> bool {
 pub(super) fn paste_attributes(s: &mut Session, p: &Value) -> Result<Value> {
     let sel = attr_sel(p);
     let scale = bool_p(p, "scaleTimes").unwrap_or(true);
+    let text_keys: Vec<&str> = crate::graphics::TEXT_ATTRIBUTE_GROUPS
+        .iter()
+        .filter(|(key, _, _)| bool_p(p, key).unwrap_or(false))
+        .flat_map(|(_, _, keys)| keys.iter().copied())
+        .collect();
     let src_v = s.state.clipboard.iter().find(|c| c.0 == TrackKind::Video).map(|c| c.2.clone());
     let src_a = s.state.clipboard.iter().find(|c| c.0 == TrackKind::Audio).map(|c| c.2.clone());
     let targets = with_links(s, &clips_p(s, p));
@@ -229,6 +234,21 @@ pub(super) fn paste_attributes(s: &mut Session, p: &Value) -> Result<Value> {
                 match dst.effects.iter_mut().find(|x| x.effect == *id) {
                     Some(slot) => *slot = e,
                     None => dst.effects.push(e),
+                }
+            }
+            if !text_keys.is_empty() {
+                // Match text layers in stacking order, preserving content and layer metadata.
+                let source = src.effects.iter().filter(|e| e.effect == filmcraft_project::graphic::TEXT_LAYER);
+                let dest = dst.effects.iter_mut().filter(|e| e.effect == filmcraft_project::graphic::TEXT_LAYER);
+                for (from, to) in source.zip(dest) {
+                    let mut motion = from.clone();
+                    retime_effect(&mut motion, src, &before, scale);
+                    for key in &text_keys {
+                        if let Some(param) = motion.params.get(*key) {
+                            to.params.insert(key.to_string(), param.clone());
+                        }
+                    }
+                    crate::graphics::clear_style_overrides(to, &text_keys);
                 }
             }
             for e in src.effects.iter().filter(|e| is_attribute_effect(e) && wants_effect(&sel, e)) {

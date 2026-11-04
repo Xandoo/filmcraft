@@ -145,7 +145,11 @@ fn tone_dropped_on_a_video_row_goes_to_the_audio_track_without_error() {
 
 /// Empty project: no sequence yet. Dropping on the empty Timeline must import *and* make a sequence.
 fn empty_harness() -> Harness<'static, FilmcraftApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).build_eframe(move |_cc| FilmcraftApp::new(Session::default()));
+    let mut builder = Harness::builder().with_size(egui::vec2(1600.0, 980.0));
+    if std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR").is_some() {
+        builder = builder.wgpu();
+    }
+    let mut h = builder.build_eframe(move |_cc| FilmcraftApp::new(Session::default()));
     for _ in 0..4 {
         step(&mut h);
     }
@@ -159,6 +163,123 @@ fn drop_on_empty_timeline(h: &mut Harness<'static, FilmcraftApp>, path: &Path) {
     step(h);
     h.input_mut().dropped_files.clear();
     step(h);
+}
+
+fn recording_fixture(extension: &str) -> PathBuf {
+    if let Ok(path) = std::env::var("FILMCRAFT_OBS_SAMPLE") {
+        return path.into();
+    }
+    let ff = filmcraft_testkit::oracle::ffmpeg_or_skip("recording drag and drop").unwrap();
+    let path = fixture(&format!("recording-drop.{extension}"));
+    let mut cmd = std::process::Command::new(ff);
+    cmd.args(["-y", "-v", "error"]);
+    for (i, color) in ["red", "green", "blue", "yellow"].iter().enumerate() {
+        cmd.args(["-itsoffset", if i < 2 { "0.070" } else { "0.103" }, "-f", "lavfi", "-i"])
+            .arg(format!("color=c={color}:s={}:r=30:d=1", if i == 3 { "48x64" } else { "64x48" }));
+    }
+    for i in 0..6 {
+        cmd.args(["-f", "lavfi", "-i"]).arg(format!("sine=frequency={}:sample_rate=48000:duration=1.2", 300 + i * 130));
+    }
+    for i in 0..10 {
+        cmd.arg("-map").arg(format!("{i}:0"));
+    }
+    let out = cmd.args(["-c:v", "libx264", "-preset", "ultrafast", "-fps_mode", "passthrough", "-c:a", "aac", "-ac", "2"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    path
+}
+
+#[test]
+fn recording_project_drop_then_timeline_drag_expands_all_streams() {
+    let path = recording_fixture("mp4");
+    let mut h = empty_harness();
+    let project = control_rect(&h, "panel.Project").center();
+    pointer_to(&mut h, project);
+    h.input_mut().dropped_files.push(std::sync::Arc::new(OsFile(path)));
+    step(&mut h);
+    h.input_mut().dropped_files.clear();
+    for _ in 0..4 {
+        step(&mut h);
+    }
+    assert!(h.state().ui.clip_dialog.is_none());
+    assert!(h.state().session.active_sequence().is_none());
+    assert_eq!(h.state().session.project.items.len(), 1);
+    let item = *h.state().session.project.items.keys().next().unwrap();
+    assert_eq!(h.state().session.project.item(item).unwrap().as_media().unwrap().recording.as_ref().unwrap().streams.len(), 10);
+    let before = h.state().session.project.to_json();
+    let from = control_rect(&h, &format!("project.item.{}", item.0)).center();
+    let to = control_rect(&h, "panel.Timeline").center();
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    pointer_to(&mut h, from);
+    h.input_mut().events.push(button(from, true));
+    step(&mut h);
+    for k in 1..=12 {
+        pointer_to(&mut h, from.lerp(to, k as f32 / 12.0));
+    }
+    h.input_mut().events.push(button(to, false));
+    step(&mut h);
+    for _ in 0..6 {
+        step(&mut h);
+    }
+    assert_eq!(clip_counts(&h), (4, 6), "{}", h.state().ui.status);
+    assert_eq!(h.state().session.project.root.children.len(), 2);
+    recording_snapshot(&mut h);
+    h.state_mut().session.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(h.state().session.project.to_json(), before);
+    // The same Project item also expands into an existing sequence with too few tracks.
+    h.state_mut().session.prefs.timeline.clip_mismatch_warning = false;
+    h.state_mut().session.execute("file.newSequence", json!({"video":1,"audio":1,"width":64,"height":48,"fps":30})).unwrap();
+    for _ in 0..4 {
+        step(&mut h);
+    }
+    let from = control_rect(&h, &format!("project.item.{}", item.0)).center();
+    let to = point_on_row(&h, "timeline.track.V1.target");
+    pointer_to(&mut h, from);
+    h.input_mut().events.push(button(from, true));
+    step(&mut h);
+    for k in 1..=12 {
+        pointer_to(&mut h, from.lerp(to, k as f32 / 12.0));
+    }
+    h.input_mut().events.push(button(to, false));
+    step(&mut h);
+    for _ in 0..6 {
+        step(&mut h);
+    }
+    assert_eq!(clip_counts(&h), (4, 6), "existing Timeline: {}", h.state().ui.status);
+    let q = h.state().session.active_sequence().unwrap();
+    assert_eq!((q.video_tracks.len(), q.audio_tracks.len()), (4, 6));
+    let catalog = h.state().session.project.item(item).unwrap().as_media().unwrap().recording.as_ref().unwrap();
+    let anchor = q.audio_tracks[0].items[0].start;
+    for (track, stream) in q.video_tracks.iter().chain(&q.audio_tracks).zip(&catalog.streams) {
+        assert_eq!(track.items[0].start - anchor, stream.start - catalog.origin);
+        assert_eq!(track.items[0].duration, stream.end - stream.start);
+    }
+}
+
+fn recording_snapshot(h: &mut Harness<'static, FilmcraftApp>) {
+    let Some(dir) = std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR") else { return };
+    h.state_mut().session.execute("playhead.set", json!({"seconds":0.25})).unwrap();
+    let revision = h.state().session.revision;
+    let frame = h.state().session.sequence_rate().frame_at(h.state().session.playhead());
+    let began = std::time::Instant::now();
+    loop {
+        step(h);
+        if h.state().program_picture().is_some_and(|k| k.frame == frame && k.revision == revision) {
+            break;
+        }
+        assert!(began.elapsed().as_secs() < 30, "recording monitor frame did not arrive");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    h.render().unwrap().save(dir.join("recording-normal-drag-drop.png")).unwrap();
+}
+
+#[test]
+fn recording_os_drop_on_empty_timeline_expands_all_streams() {
+    let mut h = empty_harness();
+    drop_on_empty_timeline(&mut h, &recording_fixture("mkv"));
+    assert_eq!(clip_counts(&h), (4, 6), "{}", h.state().ui.status);
+    assert!(h.state().ui.clip_dialog.is_none());
 }
 
 #[test]

@@ -15,23 +15,41 @@ pub struct SequenceView {
     pub a_scroll: f32,
     pub video_track_h: f32,
     pub audio_track_h: f32,
+    #[serde(default)]
+    pub fixed_playhead: bool,
+    #[serde(default = "center_anchor")]
+    pub playhead_anchor: f32,
+}
+
+fn center_anchor() -> f32 {
+    0.5
 }
 
 impl SequenceView {
     /// The view with every number brought into a usable range, or `None` when a number is not
     /// finite. Views are read from project files, so nothing in them is trusted.
     pub fn checked(self) -> Option<SequenceView> {
-        let all = [self.pps, self.scroll, self.v_scroll as f64, self.a_scroll as f64, self.video_track_h as f64, self.audio_track_h as f64];
+        let all = [
+            self.pps,
+            self.scroll,
+            self.v_scroll as f64,
+            self.a_scroll as f64,
+            self.video_track_h as f64,
+            self.audio_track_h as f64,
+            self.playhead_anchor as f64,
+        ];
         if all.iter().any(|x| !x.is_finite()) {
             return None;
         }
         Some(SequenceView {
             pps: self.pps.clamp(1e-3, 1e5),
-            scroll: self.scroll.clamp(0.0, 1e7),
+            scroll: self.scroll.clamp(if self.fixed_playhead { -1e7 } else { 0.0 }, 1e7),
             v_scroll: self.v_scroll.clamp(0.0, 1e6),
             a_scroll: self.a_scroll.clamp(0.0, 1e6),
             video_track_h: self.video_track_h.clamp(8.0, 600.0),
             audio_track_h: self.audio_track_h.clamp(8.0, 600.0),
+            fixed_playhead: self.fixed_playhead,
+            playhead_anchor: self.playhead_anchor.clamp(0.1, 0.9),
         })
     }
 }
@@ -75,4 +93,25 @@ pub struct ProjectLut {
     pub format: String,
     /// The file's text.
     pub text: std::sync::Arc<str>,
+}
+
+#[cfg(test)]
+mod sequence_view_tests {
+    use super::*;
+    #[test]
+    fn fixed_anchor_round_trips_and_legacy_views_keep_normal_scrolling() {
+        let old = serde_json::json!({"pps":40.0,"scroll":0.0,"video_track_h":60.0,"audio_track_h":56.0});
+        let mut view: SequenceView = serde_json::from_value(old).unwrap();
+        assert!(!view.fixed_playhead);
+        assert_eq!(view.playhead_anchor, 0.5);
+        view.fixed_playhead = true;
+        view.playhead_anchor = 0.3;
+        view.scroll = -10.0;
+        let back: SequenceView = serde_json::from_value(serde_json::to_value(view).unwrap()).unwrap();
+        assert_eq!(back.checked(), Some(view));
+        view.playhead_anchor = 20.0;
+        assert_eq!(view.checked().unwrap().playhead_anchor, 0.9);
+        view.fixed_playhead = false;
+        assert_eq!(view.checked().unwrap().scroll, 0.0);
+    }
 }

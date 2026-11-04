@@ -26,6 +26,8 @@
 //! Optional speaker labelling runs afterwards ([`crate::diarize`]).
 
 mod align;
+#[cfg(feature = "gpu-speech")]
+mod gpu;
 mod model;
 pub mod tokenizer;
 
@@ -53,6 +55,7 @@ fn merr(e: candle_core::Error) -> SpeechError {
 }
 
 pub struct Whisper {
+    gpu: bool,
     id: String,
     model: Mutex<Model>,
     tok: Tokenizer,
@@ -81,11 +84,20 @@ impl Whisper {
             .map(|a| a.iter().filter_map(|x| x.as_u64().map(|v| v as u32)).collect())
             .unwrap_or_else(|| vec![220, tok.eot]);
         let model = Model::load(cfg, weights).map_err(merr)?;
-        Ok(Self { id: id.to_string(), model: Mutex::new(model), tok, alignment_heads, suppress, begin_suppress })
+        Ok(Self { gpu: false, id: id.to_string(), model: Mutex::new(model), tok, alignment_heads, suppress, begin_suppress })
     }
 
     pub fn languages(&self) -> Vec<String> {
         self.tok.languages.iter().map(|l| l.0.clone()).collect()
+    }
+
+    #[cfg(feature = "gpu-speech")]
+    pub fn load_gpu(dir: &Path, id: &str) -> Result<Self, SpeechError> {
+        let mut transcriber = Self::load(dir, id)?;
+        let weights = crate::neural::read(&dir.join("model.safetensors"), 2_000_000_000)?;
+        transcriber.model.lock().unwrap_or_else(std::sync::PoisonError::into_inner).enable_gpu(&weights)?;
+        transcriber.gpu = true;
+        Ok(transcriber)
     }
 
     fn window(mel: &[f32], n_mels: usize, frames: usize, seek: usize) -> Vec<f32> {
@@ -260,6 +272,9 @@ fn repeating(seq: &[u32], tb: u32) -> bool {
 }
 
 impl Transcriber for Whisper {
+    fn device(&self) -> &str {
+        if self.gpu { "GPU (wgpu)" } else { "CPU" }
+    }
     fn id(&self) -> String {
         self.id.clone()
     }

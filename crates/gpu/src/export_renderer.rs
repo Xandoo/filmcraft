@@ -199,6 +199,8 @@ mod tests {
                 &info.name.clone(),
                 Label::Iris,
                 ItemKind::Media(Box::new(MediaClip {
+                    stream: None,
+                    recording: None,
                     media: MediaRef::Generator(g.generator.clone()),
                     info,
                     interpret: Default::default(),
@@ -303,6 +305,8 @@ mod tests {
             let info = g.info().clone();
             let media = MediaClip {
                 media: MediaRef::Generator(g.generator.clone()),
+                stream: None,
+                recording: None,
                 info,
                 interpret: Default::default(),
                 mark_in: None,

@@ -4,6 +4,9 @@
 use crate::{Dialog, FilmcraftApp};
 
 pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
+    if app.dialog.is_none() && app.ui.clip_dialog.is_none() {
+        crate::project_selection::dialog(app, ctx);
+    }
     crate::panels::marker_properties::show(app, ctx);
     crate::panels::custom_colors::show(app, ctx);
     crate::panels::palette_manager::show(app, ctx);

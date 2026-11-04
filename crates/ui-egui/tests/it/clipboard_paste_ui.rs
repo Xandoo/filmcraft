@@ -138,7 +138,7 @@ fn ctrl_v_pastes_an_image_above_the_footage() {
     let (kind, track, _, name, start, end) = new[0].clone();
     assert_eq!((kind, name.as_str(), start), ('V', "Pasted Image 1.png", at));
     assert!(track > 0 && before.iter().any(|c| c.0 == 'V' && c.1 < track && c.4 < end && c.5 > start), "it sits above a clip");
-    assert!(d.dir.join("Pasted Image 1.png").is_file(), "saved next to the project");
+    assert!(d.dir.join("Pasted Images/Pasted Image 1.png").is_file(), "saved inside the project folder");
     d.ok("ui.menu.invoke", json!({"id": "edit.undo"}));
     assert_eq!(d.clips(), before);
 }
@@ -158,7 +158,7 @@ fn paste_image_event_imports_its_own_payload_without_a_clipboard_hook() {
     d.frames(2);
     let new: Vec<_> = d.clips().into_iter().filter(|c| !before.contains(c)).collect();
     assert_eq!(new.iter().map(|c| c.3.as_str()).collect::<Vec<_>>(), ["Pasted Image 1.png"]);
-    assert!(d.dir.join("Pasted Image 1.png").is_file(), "the event payload was written, not an empty clipboard");
+    assert!(d.dir.join("Pasted Images/Pasted Image 1.png").is_file(), "the event payload was written, not an empty clipboard");
 }
 
 /// The saved PNG stores straight alpha. `Color32` is premultiplied internally, so a
@@ -177,7 +177,7 @@ fn paste_image_event_writes_straight_alpha_rgba() {
     d.frames(2);
     let new: Vec<_> = d.clips().into_iter().filter(|c| !before.contains(c)).collect();
     assert_eq!(new.iter().map(|c| c.3.as_str()).collect::<Vec<_>>(), ["Pasted Image 1.png"]);
-    let png = std::fs::read(d.dir.join("Pasted Image 1.png")).expect("the pasted PNG");
+    let png = std::fs::read(d.dir.join("Pasted Images/Pasted Image 1.png")).expect("the pasted PNG");
     let decoded = image::load_from_memory(&png).expect("decode the pasted PNG").to_rgba8();
     assert_eq!(decoded.get_pixel(0, 0).0, [255, 0, 0, 128], "straight alpha, not the premultiplied colour");
     assert_eq!(decoded.get_pixel(1, 1).0, [255, 0, 0, 128]);

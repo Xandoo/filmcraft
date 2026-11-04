@@ -68,6 +68,7 @@ fn meta(command: &str) -> Option<(&'static str, &'static str, &'static str)> {
         "sequence.normalizeMixTrack" => (tl!("Normalize Mix Track"), "normalizeMix", tl!("OK")),
         "sequence.simplify" => (tl!("Simplify Sequence"), "simplify", tl!("Simplify")),
         "sequence.transcribe" => (tl!("Transcribe Sequence"), "transcribe", tl!("Transcribe")),
+        "transcript.createText" => ("Create Text Clips", "createText", "Create"),
         "file.saveAsTemplate" => (tl!("Save as Template"), "saveTemplate", tl!("Save")),
         "markers.addFlashCue" => (tl!("Flash Cue Marker"), "flashCue", tl!("OK")),
         "help.systemCompatibilityReport" => (tl!("System Compatibility Report"), "systemReport", tl!("Close")),
@@ -92,6 +93,7 @@ fn dialog_command(id: &str) -> Option<&'static str> {
         "sequence.normalizeMixTrack" => "sequence.normalizeMixTrack",
         "sequence.simplify" => "sequence.simplify",
         "sequence.transcribe" => "sequence.transcribe",
+        "transcript.createText" => "transcript.createText",
         "file.saveAsTemplate" => "file.saveAsTemplate",
         "markers.addFlashCue" => "markers.addFlashCue",
         "file.newColorMatte" => "file.newColorMatte",
@@ -343,7 +345,21 @@ fn defaults(app: &mut FilmcraftApp, cmd: &str, id: &str) -> Result<(Value, Value
         }
         "sequence.transcribe" => {
             let tracks: Vec<String> = s.active_sequence().map(|q| (1..=q.audio_tracks.len()).map(|i| format!("A{i}")).collect()).unwrap_or_default();
-            (json!({"language": "auto", "track": "mix", "diarize": true}), json!({"tracks": tracks}))
+            let track = s
+                .active_sequence()
+                .and_then(|q| {
+                    let targeted = s.state.active_sequence.and_then(|id| s.state.targeting.get(&id));
+                    q.audio_tracks
+                        .iter()
+                        .position(|t| t.items.iter().any(|i| s.state.selection.contains(&i.id)))
+                        .or_else(|| q.audio_tracks.iter().position(|t| targeted.is_some_and(|v| v.targeted.contains(&t.id))))
+                        .map(|i| format!("A{}", i + 1))
+                })
+                .unwrap_or_else(|| "A1".into());
+            (
+                json!({"language": "auto", "track": track, "diarize": true,"background":true,"model":s.prefs.media_analysis.whisper_model}),
+                json!({"tracks": tracks}),
+            )
         }
         "file.saveAsTemplate" => (json!({"name": s.project.name}), Value::Null),
         "markers.addFlashCue" => (json!({"name": "", "comment": ""}), Value::Null),
@@ -365,6 +381,7 @@ fn defaults(app: &mut FilmcraftApp, cmd: &str, id: &str) -> Result<(Value, Value
             let (id, color) = matte.ok_or("select one Color Matte")?;
             (json!({"item": id.0, "color": filmcraft_color::to_hex(color)}), Value::Null)
         }
+        "transcript.createText" => (json!(app.ui.transcript_output.options), Value::Null),
         _ => (json!({}), Value::Null),
     })
 }
@@ -757,9 +774,13 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 );
             }
             "sequence.transcribe" => {
+                let mut model = p["model"].as_str().unwrap_or(&app.session.prefs.media_analysis.whisper_model).to_string();
+                super::transcription::picker(app, ui, &mut model);
+                p["model"] = json!(model);
+                ui.label(tl!("Transcribes trimmed timeline audio only; no video rendering or export."));
                 let langs = pairs(&["auto", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "nl", "ru"]);
                 combo(ui, &mut elems, "transcribe.language", tl!("Language:"), &mut p["language"], &langs);
-                let mut tracks: Vec<(String, String)> = vec![("mix".into(), tl!("Mix").into())];
+                let mut tracks: Vec<(String, String)> = vec![("mix".into(), tl!("All audio tracks").into())];
                 tracks.extend(
                     d.info["tracks"]
                         .as_array()
@@ -771,6 +792,20 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 );
                 combo(ui, &mut elems, "transcribe.track", tl!("Audio analysis:"), &mut p["track"], &tracks);
                 check(ui, &mut elems, pre, p, "diarize", tl!("Recognize when different speakers are talking"));
+                ui.separator();
+                super::transcription::text_settings(app, ui, true);
+                if app.ui.transcript_output.enabled {
+                    p["textTrack"] = json!(app.ui.transcript_output.options);
+                } else if let Some(params) = p.as_object_mut() {
+                    params.remove("textTrack");
+                }
+            }
+            "transcript.createText" => {
+                if let Ok(options) = filmcraft_engine::transcript::TextTrackOptions::from_params(p) {
+                    app.ui.transcript_output.options = options;
+                }
+                super::transcription::text_settings(app, ui, false);
+                *p = json!(app.ui.transcript_output.options);
             }
             "file.saveAsTemplate" => text(ui, &mut elems, pre, p, "name", tl!("Template Name:"), 240.0),
             "file.newColorMatte" => {

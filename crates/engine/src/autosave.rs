@@ -406,6 +406,9 @@ impl Preferences {
         self.trim.large_trim_offset = self.trim.large_trim_offset.clamp(1, 1000);
         self.labels.sanitize_labels();
         self.appearance.sync_color_theme();
+        if self.timeline.fixed_playhead {
+            self.timeline.auto_scroll = "smoothScroll".into();
+        }
         self.version = settings::PREFS_VERSION;
     }
 
@@ -1033,7 +1036,11 @@ impl Worker {
     fn write_journal(&mut self) -> Result<u64, String> {
         let Some(s) = &self.latest else { return Err("no unsaved recovery state to write".into()) };
         let t0 = Instant::now();
-        let bytes = filmcraft_format::encode(&s.project, false);
+        let project = match s.path.as_deref() {
+            Some(path) => crate::project_workspace::for_document(&s.project, Some(path), path),
+            None => (*s.project).clone(),
+        };
+        let bytes = filmcraft_format::encode(&project, false);
         let serialize_ms = t0.elapsed().as_secs_f64() * 1000.0;
         let t1 = Instant::now();
         let unix = unix_now();
@@ -1087,7 +1094,10 @@ impl Worker {
             (None, _) => (self.data_dir.join(names::AUTO_SAVE_DIR), s.project.name.clone()),
         };
         let t0 = Instant::now();
-        let bytes = filmcraft_format::encode(&s.project, false);
+        // Absolute references make an auto-save independently openable from its own folder.
+        let anchor = dir.join("snapshot.fcproj").to_string_lossy().into_owned();
+        let project = crate::project_workspace::for_document(&s.project, s.path.as_deref(), &anchor);
+        let bytes = filmcraft_format::encode(&project, false);
         let serialize_ms = t0.elapsed().as_secs_f64() * 1000.0;
         let t1 = Instant::now();
         let unix = unix_now();
@@ -1100,7 +1110,9 @@ impl Worker {
                 if self.prefs.save_current_project
                     && let Some(p) = &s.path
                 {
-                    match filmcraft_format::atomic_write(Path::new(p), &bytes) {
+                    let project = crate::project_workspace::for_document(&s.project, Some(p), p);
+                    let document_bytes = filmcraft_format::encode(&project, false);
+                    match filmcraft_format::atomic_write(Path::new(p), &document_bytes) {
                         Ok(()) => {
                             let _ = self.events.send(WorkerEvent::SavedProject { path: p.clone(), revision: s.revision });
                         }

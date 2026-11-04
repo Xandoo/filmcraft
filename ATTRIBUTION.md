@@ -112,7 +112,7 @@ is traced or derived from Adobe artwork.
 
 | Asset | Where |
 |---|---|
-| UI icons (tools, transport, panels, header) | `crates/ui-egui/src/icons.rs`: vector paths on a 16×16 grid |
+| UI icon renderer (artwork separately attributed below) | `crates/ui-egui/src/icons.rs`: themed vector rendering and pixel snapping; icon artwork is Lucide |
 | Source and Program range braces and trim hover cues | `crates/ui-egui/src/panels/monitor.rs` and `source_range.rs`: original generic vector shapes by FilmCraft contributors, MIT OR Apache-2.0; no third-party artwork |
 | Align / distribute / paragraph-alignment glyphs in the graphics panel | `crates/ui-egui/src/panels/graphics.rs` (`align_glyph`): bars and lines drawn with the egui painter |
 | Demo footage (ocean sunset, aurora, city night, dunes, forest, plasma), bars and tone, counting leader, colour matte | `crates/media/src/generators.rs` |
@@ -186,3 +186,106 @@ SHA-256 (`crates/speech/src/models.rs`, `docs/transcripts.md`).
 | `epaint_default_fonts::UBUNTU_LIGHT` (dependency font input) | Canonical Ltd. | [egui 6d518fc7](https://github.com/storytold/egui/tree/6d518fc799681571963842f95b55a6b68431b15a/crates/epaint_default_fonts/fonts) | Ubuntu Font Licence 1.0 (Copyright 2011 Canonical Ltd.; full upstream text in `NOTICE`) | Ubuntu-Light.ttf is egui's default proportional fallback, included by `default_fonts`; `system_fonts` is not enabled. Dependency asset unmodified here; no font file copied into this repository. |
 | `epaint_default_fonts::NOTO_EMOJI_REGULAR` (dependency font input) | The Noto Project Authors (Google) | [egui 6d518fc7](https://github.com/storytold/egui/tree/6d518fc799681571963842f95b55a6b68431b15a/crates/epaint_default_fonts/fonts), [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) | OFL-1.1 (Copyright 2013 Google Inc.; full upstream text in `NOTICE`) | NotoEmoji-Regular.ttf is the monochrome emoji fallback, included because the workspace enables `monochrome_emoji_fonts`. Dependency asset unmodified here; no font file copied into this repository. |
 | `epaint_default_fonts::HACK_REGULAR` (dependency font input) | Source Foundry Authors; Bitstream Inc.; DejaVu contributors | [egui 6d518fc7](https://github.com/storytold/egui/tree/6d518fc799681571963842f95b55a6b68431b15a/crates/epaint_default_fonts/fonts), [Hack](https://github.com/source-foundry/Hack) | MIT (Copyright (c) 2018 Source Foundry Authors) and the Bitstream Vera License (Copyright (c) 2003 Bitstream, Inc.); the DejaVu work is public domain; full upstream notices in `NOTICE` | Hack-Regular.ttf is egui's default monospace fallback, included by `default_fonts`. Dependency asset unmodified here; no font file copied into this repository. |
+
+## Lucide functional icons
+
+| Asset | Author | Source | Licence |
+|---|---|---|---|
+| `assets/icons/lucide/arrow-left-to-line.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/arrow-right-left.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/arrow-right-to-line.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/arrow-up.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/arrow-up-from-line.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/audio-lines.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/bell.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/between-horizontal-start.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/bookmark.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/brackets.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/camera.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/captions.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/chevron-down.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/chevron-left.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/chevron-right.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/circle.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/clapperboard.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/clock.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/code-xml.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/columns-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/diamond.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/download.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/external-link.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/eye.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/eye-off.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/fast-forward.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/file-plus-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/film.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/folder.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/globe.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/grid-2x2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/hand.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/hard-drive.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/house.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/image.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/info.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/layers.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/layout-dashboard.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/layout-grid.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/link.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/list.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/list-filter.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/list-video.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/lock.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/lock-keyhole.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/lock-keyhole-open.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/magnet.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/maximize.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/menu.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/message-circle.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/mic.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/monitor.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/moon.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/mouse-pointer-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/move-horizontal.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/music.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/network.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/panels-top-left.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/pause.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/pen-tool.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/picture-in-picture-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/pin.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/pipette.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/play.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/plus.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/rectangle-horizontal.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/redo-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/repeat.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/replace.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/rewind.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/rotate-ccw.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/scissors.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/scissors-line-dashed.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/search.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/settings.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/skip-back.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/skip-forward.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/sliders-horizontal.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/sparkles.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/square.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/star.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/step-back.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/step-forward.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/sun.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/timer.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/trash-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/type.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/undo-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/unlink.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/upload.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/volume-2.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/volume-x.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/wand-sparkles.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/wrench.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/x.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `assets/icons/lucide/zoom-in.svg` | Lucide Contributors; Cole Bemis | Lucide 0.468.0 (`f12b0de177fbc2a6795e99be065887e72b237123`) | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `crates/ui-egui/src/lucide_paths.rs` | Lucide Contributors; Cole Bemis | Generated from the pinned Lucide SVGs above | ISC AND MIT (`assets/icons/lucide/LICENSE.txt`) |
+| `crates/ui-egui/src/project_selection.rs` (procedural thumbnail placeholder) | FilmCraft contributors | Original work | MIT OR Apache-2.0 |

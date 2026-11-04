@@ -14,6 +14,8 @@ fn setup() -> (Project, ItemId, ItemId, ItemId, SourceMap) {
             &info.name.clone(),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(generator),
                 info,
                 interpret: Default::default(),
@@ -117,6 +119,8 @@ fn cross_dissolve_midpoint() {
         "blue",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(blue_src.generator.clone()),
             info,
             interpret: Default::default(),
@@ -169,6 +173,8 @@ fn audio_mix_bars_tone() {
         "bars",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(Generator::BarsAndTone),
             info,
             interpret: Default::default(),
@@ -298,6 +304,8 @@ fn tone_with(effects: &[(&str, &[(&str, f64)])]) -> (Project, ItemId, SourceMap)
         "bars",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(Generator::BarsAndTone),
             info,
             interpret: Default::default(),
@@ -487,6 +495,8 @@ fn a_reversed_clip_shows_exactly_its_source_range() {
         "ids",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(g.generator.clone()),
             info,
             interpret: Default::default(),

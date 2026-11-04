@@ -851,6 +851,8 @@ pub(crate) fn add_tracks(s: &mut Session, p: &Value) -> Result<Value> {
     if nv + na + ns == 0 {
         return Err(bad(cmd, "no tracks to add"));
     }
+    let count = u64::try_from(nv.saturating_add(na).saturating_add(ns)).map_err(|_| bad(cmd, "track identity budget overflow"))?;
+    s.project.next_id.checked_add(count).ok_or_else(|| bad(cmd, "project identity space exhausted"))?;
     let added = s.edit_sequence("Add Tracks", |q, ctx, _| {
         let mut new = |kind: TrackKind, prefix: &str, channels: Option<AudioChannels>| {
             let mut t = filmcraft_project::Track::new(TrackId(ctx.alloc()), kind, format!("{prefix} 0"));

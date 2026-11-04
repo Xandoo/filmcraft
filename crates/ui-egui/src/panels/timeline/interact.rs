@@ -280,8 +280,9 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
             match sideways {
                 Some(d) => {
                     let v = &mut app.ui.timeline;
+                    let padding = if v.fixed_playhead { super::fixed_anchor(v.playhead_anchor, layout.content.width()) as f64 / v.pps } else { 0.0 };
                     let limit = max_scroll(seq.duration().seconds(), layout.content.width(), v.pps);
-                    v.target_scroll = (v.target_scroll - d as f64 / v.pps).clamp(0.0, limit);
+                    v.target_scroll = (v.target_scroll - d as f64 / v.pps).clamp(-padding, limit);
                     v.scroll = v.target_scroll;
                 }
                 // up and down: the video tracks above the divider, the audio tracks below it (the
@@ -669,7 +670,8 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             Drag::Pan { last, start_scroll, start_v, audio, start_a } => {
                 let dx = p.x - last.x;
                 let v = &mut app.ui.timeline;
-                v.target_scroll = (v.target_scroll - dx as f64 / v.pps).max(0.0);
+                let minimum = if v.fixed_playhead { -super::fixed_anchor(v.playhead_anchor, layout.content.width()) as f64 / v.pps } else { 0.0 };
+                v.target_scroll = (v.target_scroll - dx as f64 / v.pps).max(minimum);
                 v.scroll = v.target_scroll;
                 // the tracks follow the pointer: the video tracks hang from the divider (scrolling
                 // brings higher ones down), the audio tracks start at it, as with the wheel
@@ -1140,12 +1142,88 @@ fn effect_drop_preview(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence
     }
 }
 
+fn fixed_playhead_input(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &Layout, resp: &egui::Response) -> bool {
+    let ctx = ui.ctx().clone();
+    if app.ui.timeline.fixed_playhead {
+        let x = layout.content.min.x + super::fixed_anchor(app.ui.timeline.playhead_anchor, layout.content.width());
+        let handle = Rect::from_min_max(pos2(x - 9.0, layout.ruler.max.y - 14.0), pos2(x + 9.0, layout.ruler.max.y));
+        app.auto.add("timeline.playhead.anchor", handle, "Drag to position the fixed playhead");
+        if ui.rect_contains_pointer(handle) {
+            ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
+        }
+        if resp.is_pointer_button_down_on()
+            && ctx.input(|i| i.pointer.primary_pressed())
+            && ctx.input(|i| i.pointer.press_origin()).is_some_and(|p| handle.contains(p))
+        {
+            app.tl.fixed_anchor_drag = Some(app.ui.timeline.playhead_anchor);
+            app.tl.pressed = None;
+            app.tl.cancelled = false;
+        }
+        if let Some(before) = app.tl.fixed_anchor_drag {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                app.ui.timeline.playhead_anchor = before;
+                app.tl.cancelled = true;
+            } else if !app.tl.cancelled
+                && let Some(p) = ctx.pointer_interact_pos()
+            {
+                let width = layout.content.width();
+                if width > 0.0 {
+                    app.ui.timeline.playhead_anchor = super::fixed_anchor((p.x - layout.content.min.x) / width, width) / width;
+                }
+            }
+            if !ctx.input(|i| i.pointer.primary_down()) {
+                app.tl.fixed_anchor_drag = None;
+            }
+            ctx.request_repaint();
+            return true;
+        }
+        if resp.is_pointer_button_down_on()
+            && ctx.input(|i| i.pointer.primary_pressed())
+            && let Some(p) = ctx.input(|i| i.pointer.press_origin())
+            && matches!(hit(seq, layout, p), Hit::Ruler)
+        {
+            app.begin_timeline_scrub();
+            app.tl.fixed_ruler_drag = Some((p.x, app.session.playhead()));
+            app.tl.pressed = None;
+            app.tl.cancelled = false;
+        }
+        if let Some((origin, initial)) = app.tl.fixed_ruler_drag {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                app.session.set_playhead(initial);
+                app.tl.cancelled = true;
+            } else if !app.tl.cancelled
+                && layout.pps.is_finite()
+                && layout.pps > 0.0
+                && let Some(p) = ctx.pointer_interact_pos()
+            {
+                let seconds = initial.seconds() - f64::from(p.x - origin) / layout.pps;
+                if seconds.is_finite() {
+                    app.session.set_playhead(seq.settings.frame_rate.snap_nearest(Tick::from_seconds_f64(seconds.max(0.0))));
+                }
+            }
+            if !ctx.input(|i| i.pointer.primary_down()) {
+                app.tl.fixed_ruler_drag = None;
+            }
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+            ctx.request_repaint();
+            return true;
+        }
+    } else {
+        app.tl.fixed_anchor_drag = None;
+        app.tl.fixed_ruler_drag = None;
+    }
+    false
+}
+
 /// Handle Timeline pointer input: remember the grab from the press frame, jump the playhead on a ruler press, select a marker on its press, and reset the
 /// cancel flag once the button is released.
 pub(super) fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &Layout, rect: Rect) {
     let ctx = ui.ctx().clone();
     let area = Rect::from_min_max(pos2(layout.content.min.x, layout.ruler.min.y), layout.content.max);
     let resp = ui.interact(area, egui::Id::unique("timeline-area"), Sense::click_and_drag());
+    if fixed_playhead_input(app, ui, seq, layout, &resp) {
+        return;
+    }
     let pos = resp.hover_pos().or(resp.interact_pointer_pos());
     let mods = ctx.input(|i| i.modifiers);
     let tool = app.ui.tool;
@@ -1165,6 +1243,7 @@ pub(super) fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence
         let grab = grab_at(seq, layout, p, tool, mods, roll_ripple);
         // the playhead jumps to a press on the ruler at once, not only once the pointer has moved (#1090)
         if matches!(grab, Grab::Other(Hit::Ruler)) {
+            app.begin_timeline_scrub();
             scrub_playhead(app, seq, layout, p, mods.shift);
         }
         app.tl.pressed = Some(Pressed { pos: p, tick: layout.tick_at(p.x), grab, v_scroll: layout.v_scroll, a_scroll: layout.a_scroll });

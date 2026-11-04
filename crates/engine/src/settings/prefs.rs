@@ -11,7 +11,7 @@ pub struct GeneralPrefs {
     /// `zh-cn`, `de`, `ru`, `fr`, `id`, `it`, `ko`, `cs`, `pl`, `sv`, `tr`, or `system` (the default: the operating system's preferred language when the
     /// interface has it, otherwise English).
     pub interface_language: String,
-    /// "At Startup": `showHome` (FilmCraft: the demo project), `openMostRecent`, `emptyProject`.
+    /// Legacy startup preference, retained for file/client compatibility. Desktop always shows Project Selection.
     pub at_startup: String,
     /// "When Opening a Project": `showOpenDialog` | `showHome`.
     pub when_opening_project: String,
@@ -274,6 +274,8 @@ pub struct MediaAnalysisPrefs {
     pub default_language: String,
     /// Speech model (`transcript.models`).
     pub whisper_model: String,
+    /// Local speech execution: auto | gpu | cpu.
+    pub speech_device: String,
 }
 
 impl Default for MediaAnalysisPrefs {
@@ -287,6 +289,7 @@ impl Default for MediaAnalysisPrefs {
             language_auto_detect: false,
             default_language: "en".into(),
             whisper_model: filmcraft_speech::models::DEFAULT_MODEL.into(),
+            speech_device: "auto".into(),
         }
     }
 }
@@ -348,6 +351,8 @@ pub struct TimelinePrefs {
     pub still_image_unit: String,
     /// "Timeline Playback Auto-Scrolling": `noScroll` | `pageScroll` | `smoothScroll`.
     pub auto_scroll: String,
+    /// Keep the playhead at a fixed horizontal offset; requires smooth scrolling.
+    pub fixed_playhead: bool,
     /// "Timeline Mouse Scrolling": `vertical` | `horizontal`.
     pub mouse_scrolling: String,
     /// Default Audio Tracks per media type: `useFile` | `mono` | `stereo` | `5.1` | `adaptive`.
@@ -381,6 +386,7 @@ impl Default for TimelinePrefs {
             still_image_duration: 5.0,
             still_image_unit: "seconds".into(),
             auto_scroll: "pageScroll".into(),
+            fixed_playhead: false,
             mouse_scrolling: "vertical".into(),
             mono_media_tracks: "useFile".into(),
             stereo_media_tracks: "useFile".into(),

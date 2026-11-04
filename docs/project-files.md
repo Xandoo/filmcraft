@@ -3,6 +3,39 @@
 FilmCraft projects are `.fcproj` files: UTF-8 JSON with an explicit schema version. Reading and
 writing them is `crates/format` (`filmcraft-format`); the engine's `file.*` commands use it.
 
+## Desktop project folders and Project Selection
+
+Normal desktop launches show Project Selection, with recent projects in grid (default) or list view.
+Opening a `.fcproj` directly bypasses the page; `--demo` and `--empty` are explicit development
+shortcuts. Closing the project returns to Project Selection. The legacy `general.atStartup` setting
+is accepted for compatibility but no longer changes desktop startup.
+
+New Project and Create Demo Project ask for a name and parent directory and create
+`<parent>/<name>/<name>.fcproj` before opening the editor. An occupied folder is never overwritten.
+The project file's containing directory is the project root. Auto-saves, previews, proxies,
+recordings, narrations, extracted audio and enabled ingest outputs default to folders within it;
+explicit scratch/destination overrides remain supported. Imports reference their source media
+without copying it unless ingest copying is explicitly enabled.
+
+Desktop Save As creates another project folder. It copies referenced source files physically
+inside the old root (including all frames of image sequences), keeps external references in place,
+and regenerates disposable caches. Copying is a cancellable job; the project file is published last.
+Failure or cancellation keeps the current project. A partially copied destination is retained for
+inspection; only empty newly created directories are cleaned up. Edits made while copying remain
+in the current session rather than being replaced by the older saved snapshot.
+
+Internal paths are serialized relative to the project root, so the folder can be moved or shared.
+External media must still be accessible or relinked on the receiving computer. Exact media paths
+approved through import/relink are remembered per project in the local application data directory,
+never in the shared project. No credentials or broad network-share approvals are stored.
+
+Optional display metadata and the view choice live in `<data dir>/recent-projects.json` (version 1).
+The existing recent-project preference list remains authoritative and keeps ten paths. Missing
+projects stay listed; Remove from Recents only removes history. Thumbnail images in
+`<project root>/.filmcraft/thumbnail.png` show the active sequence at its last successful save's
+playhead; unavailable images use FilmCraft's original procedural placeholder. Metadata and thumbnails
+are optional and their failure does not prevent a project from opening or saving.
+
 ## Format
 
 ```json
@@ -244,7 +277,7 @@ opens the dialog on a page.
 
 | Category | Takes effect |
 |---|---|
-| General | At Startup (Show Home = demo project, Open Most Recent, empty project; recent projects are remembered on open/save), Show Tool Tips |
+| General | Project Selection on desktop startup; recent projects are remembered on open/save, Show Tool Tips |
 | Appearance | Appearance Mode `appearanceMode` (`auto` = Sync with system / `dark` (default) / `light`; the header button and View ▸ Appearance ▸ Next Appearance Mode cycle it), Dark Theme `darkTheme` (`darkest` (default) / `dark`), Light Theme `lightTheme` (`light`), highlight colour, accessible contrast. `colorTheme` (Darkest / Dark / Light) is legacy input: setting it (older files and clients, View ▸ Appearance ▸ a theme) selects that theme and fixes the mode to its family; a file without `appearanceMode` migrates to its theme's fixed mode. It is kept in line with the choices: the theme a fixed mode shows, the dark theme in Auto |
 | Audio | Automatch Time, Large Volume Adjustment, automation keyframe thinning (linear, minimum time) |
 | Audio Hardware | device class (cpal host), output device, I/O buffer size, sample rate, force document rate, Output Mapping (programme L/R → device channels) |

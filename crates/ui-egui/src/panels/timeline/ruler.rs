@@ -46,6 +46,7 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
     // toolbar: 30 × 30 buttons, "on" = #4b4b4b fill
     let mut x = rect.min.x + 12.0;
     let y = rect.min.y + 26.0;
+    let step = ((hw - 24.0) / 6.0).clamp(16.0, 30.0);
     let toggles: [(Icon, &str, bool, bool, &str); 6] = [
         (Icon::Nest, "nest", !app.session.state.sequences_as_clips, true, tl!("Insert and overwrite sequences as nests or individual clips")),
         (Icon::Magnet, "snap", app.session.state.snapping, true, tl!("Snap in Timeline (S)")),
@@ -55,7 +56,7 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
         (Icon::Wrench, "settings", false, false, tl!("Timeline Display Settings")),
     ];
     for (icon, key, on, toggle, tip) in toggles {
-        let r = Rect::from_min_size(pos2(x, y), vec2(28.0, 28.0));
+        let r = Rect::from_min_size(pos2(x, y), vec2(step - 2.0, 28.0));
         let resp = ui.interact(r, egui::Id::unique(("tl-toggle", key)), Sense::click()).on_hover_text(tip);
         app.auto.add(&format!("timeline.toggle.{key}"), r, tip);
         if toggle && on {
@@ -63,7 +64,7 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
         } else if resp.hovered() {
             p.rect_filled(r, 4.0, t.hover);
         }
-        icons::paint(&p, r.shrink(7.0), icon, if toggle && on { t.text } else { t.text_dim });
+        icons::paint(&p, r.shrink2(vec2(4.0, 7.0)), icon, if toggle && on { t.text } else { t.text_dim });
         if resp.clicked() {
             let _ = match key {
                 "nest" => app.session.execute("sequence.nestSequences", json!({})),
@@ -77,7 +78,7 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
             // stays open while options are toggled: only a click outside it (or an action) closes it
             egui::Popup::menu(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| timeline_settings(app, ui));
         }
-        x += 30.0;
+        x += step;
     }
     // ----- ruler: markers row · labels · ticks · 2 pt render bar
     let clip = p.with_clip_rect(ruler);
@@ -212,6 +213,12 @@ fn draw_markers(app: &mut FilmcraftApp, ui: &egui::Ui, clip: &egui::Painter, lay
 /// The Timeline Display Settings popup from the ruler toolbar: thumbnails, waveforms, edit
 /// markers and the track-height presets.
 fn timeline_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
+    ui.label(tl!("Track preview height"));
+    let r = ui.add(egui::Slider::new(&mut app.ui.timeline.video_track_h, 22.0..=220.0).text(tl!("Video")));
+    app.auto.add("timeline.settings.videoHeight", r.rect, "All video track heights");
+    let r = ui.add(egui::Slider::new(&mut app.ui.timeline.audio_track_h, 22.0..=220.0).text(tl!("Audio")));
+    app.auto.add("timeline.settings.audioHeight", r.rect, "All audio track heights");
+    ui.separator();
     let c = ui.checkbox(&mut app.ui.timeline.show_thumbnails, tl!("Show Video Thumbnails"));
     app.auto.add("timeline.settings.showThumbnails", c.rect, "Show Video Thumbnails");
     let on = app.ui.timeline.show_thumbnails;

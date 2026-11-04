@@ -568,6 +568,11 @@ fn transcript(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     let mut actions: Vec<(String, Value)> = Vec::new();
     let content = app.transcript_cache.content(&app.session);
+    let mut toolbar =
+        ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(rect.min, vec2(rect.width(), 56.0))).id_salt("transcript-model-toolbar"));
+    let mut selected = app.session.prefs.media_analysis.whisper_model.clone();
+    super::transcription::picker(app, &mut toolbar, &mut selected);
+    let rect = Rect::from_min_max(pos2(rect.min.x, (rect.min.y + 56.0).min(rect.max.y)), rect.max);
     let words = &content.words;
     if words.is_empty() {
         let c = rect.center();
@@ -596,7 +601,7 @@ fn transcript(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             e.enabled = Some(available);
         }
         if available && resp.clicked() {
-            actions.push(("transcript.generate".into(), json!({})));
+            actions.push(("sequence.transcribe".into(), json!({})));
         } else if !available {
             resp.on_hover_text(note);
         }
@@ -615,11 +620,13 @@ fn transcript(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let highlights = app.transcript_cache.highlights(&app.ui.transcript_search);
     let mut x = bar.min.x + sw + 10.0;
     let range = sel.map(|(a, b)| json!({"from": a.min(b), "to": a.max(b)}));
-    let tools: [(Icon, &str, &str, bool, &str, Value); 4] = [
+    let tools: [(Icon, &str, &str, bool, &str, Value); 6] = [
         (Icon::Razor, "text.transcript.extract", tl!("Extract selected text"), sel.is_some(), "transcript.extract", range.clone().unwrap_or_default()),
         (Icon::Trash, "text.transcript.lift", tl!("Lift selected text"), sel.is_some(), "transcript.lift", range.unwrap_or_default()),
         (Icon::Link, "text.transcript.removeFillers", tl!("Remove filler words"), true, "transcript.removeFillers", json!({})),
         (Icon::Captions, "text.transcript.createCaptions", tl!("Create captions"), true, "transcript.createCaptions", json!({})),
+        (Icon::Type, "text.transcript.createText", "Create editable text clips…", true, "transcript.createText", json!({})),
+        (Icon::Plus, "text.transcript.transcribe", "Transcribe…", filmcraft_speech_available(app), "sequence.transcribe", json!({})),
     ];
     for (icon, id, label, enabled, cmd, params) in tools {
         let r = Rect::from_min_size(pos2(x, bar.min.y), vec2(24.0, 24.0));

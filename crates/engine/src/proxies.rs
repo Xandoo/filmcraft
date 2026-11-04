@@ -438,6 +438,7 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let dest = str_p(p, "destination").map(str::to_string).or_else(|| {
         crate::project_tools::trusted_scratch(s.project.settings.scratch.captured.as_deref(), s.path.as_deref(), &s.prefs.auto_save.scratch_folders)
             .map(|d| d.join("Proxies").to_string_lossy().into_owned())
+            .or_else(|| s.path.as_deref().and_then(|p| Path::new(p).parent()).map(|d| d.join("Proxies").to_string_lossy().into_owned()))
     });
     let mut work = Vec::new();
     let mut taken = Vec::new();
@@ -527,6 +528,10 @@ fn copy_for_ingest(s: &mut Session, item: ItemId, path: &str, dir: &Path) -> Res
 
 /// Ingest freshly imported items per the project's ingest settings.
 pub fn ingest(s: &mut Session, items: &[ItemId]) -> Result<Value> {
+    // Independent streams share the original recording; automatic ingest must not flatten
+    // them into a copied/transcoded/proxy file without a native-stream mapping.
+    let items: Vec<_> = items.iter().copied().filter(|id| s.project.item(*id).and_then(|i| i.as_media()).is_none_or(|m| m.recording.is_none())).collect();
+    let items = items.as_slice();
     let ing = s.project.settings.ingest.clone();
     if !ing.enabled || items.is_empty() {
         return Ok(Value::Null);
@@ -549,7 +554,12 @@ pub fn ingest(s: &mut Session, items: &[ItemId]) -> Result<Value> {
             let Some((_, path, _)) = media_path(&s.project, i) else { continue };
             let dir = match &destination {
                 Some(d) => d.clone(),
-                _ => Path::new(&path).parent().unwrap_or(Path::new(".")).join("Ingested Media"),
+                _ => s
+                    .path
+                    .as_deref()
+                    .and_then(|p| Path::new(p).parent())
+                    .unwrap_or_else(|| Path::new(&path).parent().unwrap_or(Path::new(".")))
+                    .join("Ingested Media"),
             };
             if Path::new(&path).file_name().is_some_and(|name| Path::new(&path) == dir.join(name)) {
                 continue;
@@ -578,7 +588,12 @@ pub fn ingest(s: &mut Session, items: &[ItemId]) -> Result<Value> {
                 }
                 let dir = match &destination {
                     Some(d) => d.clone(),
-                    _ => Path::new(&path).parent().unwrap_or(Path::new(".")).join("Ingested Media"),
+                    _ => s
+                        .path
+                        .as_deref()
+                        .and_then(|p| Path::new(p).parent())
+                        .unwrap_or_else(|| Path::new(&path).parent().unwrap_or(Path::new(".")))
+                        .join("Ingested Media"),
                 };
                 let stem = Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name);
                 let output = reserve_unique_path(&dir, &stem, "", pr.extension, &taken)?;

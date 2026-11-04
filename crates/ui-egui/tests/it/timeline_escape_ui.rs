@@ -186,6 +186,149 @@ fn escape_cancels_ruler_scrub_and_restores_playhead() {
     assert_eq!(d.app().session.playhead(), initial_playhead, "playhead remains at initial time after release");
 }
 
+fn fixed_playhead_driver() -> Driver {
+    let mut d = Driver::demo();
+    d.exec("prefs.set", json!({"key":"timeline.fixedPlayhead", "value":true}));
+    d.harness.state_mut().ui.timeline.playhead_anchor = 0.5;
+    d.harness.state_mut().session.set_playhead(filmcraft_time::Tick::from_seconds_f64(5.0));
+    d.frames(4);
+    d
+}
+
+#[test]
+fn timeline_scrub_pauses_and_resumes_playback_at_drop() {
+    for fixed in [false, true] {
+        let mut d = fixed_playhead_driver();
+        d.exec("prefs.set", json!({"key":"timeline.fixedPlayhead", "value":fixed}));
+        d.frames(3);
+        let project = d.app().session.project.to_json();
+        let layout = d.app().tl.layout.as_ref().unwrap().clone();
+        let from = pos2(layout.content.center().x + 100.0, layout.ruler.center().y);
+        let to = from - egui::vec2(40.0, 0.0);
+        let speed = if fixed { -1.0 } else { 2.0 };
+        d.harness.state_mut().play(speed);
+        d.send(egui::Event::PointerMoved(from));
+        d.send(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        assert!(!d.app().playback.playing, "pause on press, fixed={fixed}");
+        d.send(egui::Event::PointerMoved(to));
+        let dropped = d.app().session.playhead();
+        d.frames(4);
+        assert_eq!(d.app().session.playhead(), dropped, "clock stays paused while held");
+        assert!(!d.app().playback.playing);
+        d.send(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        assert!(d.app().playback.playing, "resume on release, fixed={fixed}");
+        assert_eq!(d.app().playback.speed, speed);
+        assert_eq!(d.app().session.playhead(), dropped);
+        assert!(d.app().tl.scrub_resume.is_none());
+        assert_eq!(d.app().session.project.to_json(), project);
+    }
+}
+
+#[test]
+fn timeline_scrub_explicit_stop_prevents_resume() {
+    let mut d = fixed_playhead_driver();
+    let layout = d.app().tl.layout.as_ref().unwrap().clone();
+    let from = pos2(layout.content.center().x + 100.0, layout.ruler.center().y);
+    d.harness.state_mut().play(1.0);
+    d.send(egui::Event::PointerMoved(from));
+    d.send(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    assert!(d.app().tl.scrub_resume.is_some());
+    d.harness.state_mut().stop();
+    d.send(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    assert!(!d.app().playback.playing);
+}
+
+#[test]
+fn timeline_scrub_escape_restores_time_and_resumes_on_release() {
+    let mut d = fixed_playhead_driver();
+    let layout = d.app().tl.layout.as_ref().unwrap().clone();
+    let from = pos2(layout.content.center().x + 100.0, layout.ruler.center().y);
+    let to = from - egui::vec2(40.0, 0.0);
+    d.harness.state_mut().play(1.0);
+    d.send(egui::Event::PointerMoved(from));
+    d.send(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    let before = d.app().session.playhead();
+    d.send(egui::Event::PointerMoved(to));
+    assert_ne!(d.app().session.playhead(), before);
+    d.escape();
+    assert!(!d.app().playback.playing);
+    assert_eq!(d.app().session.playhead(), before);
+    d.send(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    assert!(d.app().playback.playing);
+    assert_eq!(d.app().session.playhead(), before);
+}
+
+#[test]
+fn fixed_playhead_head_drags_without_modifiers_and_preserves_time() {
+    let mut d = fixed_playhead_driver();
+    let initial = d.app().session.playhead();
+    let project = d.app().session.project.to_json();
+    let r = d.rect("timeline.playhead.anchor");
+    let from = pos2((r[0] + r[2] / 2.0) as f32, (r[1] + r[3] / 2.0) as f32);
+    let to = from + egui::vec2(100.0, 0.0);
+    d.send(egui::Event::PointerMoved(from));
+    d.send(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    assert!(d.app().tl.fixed_anchor_drag.is_some(), "the head owns an ordinary press");
+    assert!(d.app().tl.fixed_ruler_drag.is_none());
+    d.send(egui::Event::PointerMoved(to));
+    assert!(d.app().ui.timeline.playhead_anchor > 0.5);
+    d.send(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    d.frames(3);
+    let r = d.rect("timeline.playhead.anchor");
+    assert!((r[0] + r[2] / 2.0 - f64::from(to.x)).abs() < 1.0, "the head follows the drag");
+    assert!(d.app().tl.fixed_anchor_drag.is_none());
+    assert_eq!(d.app().session.playhead(), initial);
+    assert_eq!(d.app().session.project.to_json(), project);
+    if let Some(dir) = std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        d.harness.render().unwrap().save(dir.join("fixed-playhead-offset.png")).unwrap();
+    }
+}
+
+#[test]
+fn fixed_playhead_escape_restores_offset_and_next_drag_works() {
+    let mut d = fixed_playhead_driver();
+    let initial = d.app().session.playhead();
+    for cancel in [true, false] {
+        let r = d.rect("timeline.playhead.anchor");
+        let from = pos2((r[0] + r[2] / 2.0) as f32, (r[1] + r[3] / 2.0) as f32);
+        let to = from + egui::vec2(-100.0, 0.0);
+        d.send(egui::Event::PointerMoved(from));
+        d.send(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        d.send(egui::Event::PointerMoved(to));
+        assert!(d.app().ui.timeline.playhead_anchor < 0.5);
+        if cancel {
+            d.escape();
+            d.send(egui::Event::PointerMoved(to - egui::vec2(40.0, 0.0)));
+            assert_eq!(d.app().ui.timeline.playhead_anchor, 0.5);
+        }
+        d.send(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        assert_eq!(d.app().session.playhead(), initial);
+    }
+    assert!(d.app().ui.timeline.playhead_anchor < 0.5);
+}
+
+#[test]
+fn fixed_playhead_ruler_still_scrubs_without_moving_offset() {
+    let mut d = fixed_playhead_driver();
+    let initial = d.app().session.playhead();
+    let layout = d.app().tl.layout.as_ref().unwrap().clone();
+    let from = pos2(layout.content.center().x + 100.0, layout.ruler.max.y - 7.0);
+    let to = from + egui::vec2(50.0, 0.0);
+    d.send(egui::Event::PointerMoved(from));
+    d.send(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    d.send(egui::Event::PointerMoved(to));
+    assert!(d.app().tl.fixed_ruler_drag.is_some());
+    assert!(d.app().tl.fixed_anchor_drag.is_none());
+    assert!(d.app().session.playhead() < initial);
+    assert_eq!(d.app().ui.timeline.playhead_anchor, 0.5);
+    d.escape();
+    d.send(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    assert_eq!(d.app().session.playhead(), initial);
+    assert!(!d.app().playback.playing, "scrubbing a stopped timeline stays stopped");
+}
+
 #[test]
 fn escape_cancels_marquee_selection() {
     let mut d = Driver::demo();

@@ -26,6 +26,8 @@ fn project() -> (Project, ItemId) {
         "a.wav",
         filmcraft_project::Label::Iris,
         filmcraft_project::ItemKind::Media(Box::new(filmcraft_project::MediaClip {
+            stream: None,
+            recording: None,
             media: filmcraft_project::MediaRef::File { path: "/m/a.wav".into() },
             info,
             interpret: Default::default(),

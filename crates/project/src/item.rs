@@ -53,6 +53,12 @@ impl AudioChannelMap {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MediaClip {
+    /// Explicit container stream; absent preserves legacy import behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<filmcraft_media::streams::StreamId>,
+    /// One Project-panel recording; placement expands its native streams into independent clips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording: Option<filmcraft_media::streams::StreamCatalog>,
     pub media: MediaRef,
     pub info: MediaInfo,
     pub interpret: Interpretation,

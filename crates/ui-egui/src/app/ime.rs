@@ -73,7 +73,7 @@ impl FilmcraftApp {
     /// choice); it is not an open modal on its own, so it must not block an otherwise eligible
     /// editor between frames.
     pub(crate) fn ime_modal_blocks_input(&self) -> bool {
-        self.dialog.is_some() || self.native_dialog_open()
+        self.dialog.is_some() || (self.project_selection_runtime.enabled && self.ui.project_selection.create.is_some()) || self.native_dialog_open()
     }
 
     /// Hosts with post-logic application work call this at their actual outer return.

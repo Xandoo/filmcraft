@@ -242,7 +242,16 @@ pub(super) fn draw_clip(
                         Some((inner.item, inner.source_time_at(mt)))
                     })
                     .unwrap_or((it.item, mt));
-                if let Some((tex, _)) = app.thumbnail(ctx, thumb_item, mt, 160) {
+                // Quantized, capped resolutions prevent a cache entry for every drag pixel.
+                let pixels = (w * ctx.pixels_per_point()).clamp(80.0, 640.0);
+                let resolution = if pixels <= 160.0 {
+                    160
+                } else if pixels <= 320.0 {
+                    320
+                } else {
+                    640
+                };
+                if let Some((tex, _)) = app.thumbnail(ctx, thumb_item, mt, resolution) {
                     let r = Rect::from_min_size(pos2(x, th.min.y), vec2(w, th.height()));
                     cp.image(tex, r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 }

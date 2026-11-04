@@ -61,6 +61,8 @@ fn placing_media_with_two_streams_expands_tracks_and_keeps_stream_indices() {
         "two streams",
         filmcraft_project::Label::Iris,
         filmcraft_project::ItemKind::Media(Box::new(filmcraft_project::MediaClip {
+            stream: None,
+            recording: None,
             media: filmcraft_project::MediaRef::Generator(filmcraft_media::Generator::BarsAndTone),
             info,
             interpret: Default::default(),
@@ -118,6 +120,8 @@ fn clip_peaks_measure_the_stream_the_clip_plays() {
         "two streams",
         filmcraft_project::Label::Iris,
         filmcraft_project::ItemKind::Media(Box::new(filmcraft_project::MediaClip {
+            stream: None,
+            recording: None,
             media: filmcraft_project::MediaRef::Generator(filmcraft_media::Generator::BarsAndTone),
             info,
             interpret: Default::default(),

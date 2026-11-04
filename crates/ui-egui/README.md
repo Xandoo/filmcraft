@@ -12,6 +12,28 @@ Overrides survive text edits, project saves and Undo/Redo. A width or colour dra
 step. `graphics_ui::stroke_colour_pickers_edit_only_the_type_tool_selection` drives both rows
 through the control channel; `FILMCRAFT_UI_SHOTS` enables a rendered screenshot.
 
+## Fixed playhead
+
+Preferences → Timeline owns Fixed Playhead (`timeline.fixedPlayhead`), across sequences and
+restarts. Enabling it forces Timeline Playback Auto-Scrolling to Smooth Scroll; the dropdown is
+disabled until Fixed Playhead is turned off. Disabling it leaves Smooth Scroll selected and makes
+the dropdown editable. The preference command also enforces this invariant when loading settings
+or applying automation changes. Sequence views retain their individual handle offsets.
+
+In Fixed Playhead mode, drag the playhead's top handle to adjust its horizontal offset without
+changing the current sequence time. No modifier is required; Alt-drag also works. Dragging elsewhere
+on the ruler scrubs the timeline under the fixed playhead. Escape restores the starting offset or
+time and cancels the gesture until release. The `timeline.playhead.anchor` automation id exposes
+the handle. `timeline_escape_ui::fixed_playhead_*` covers handle dragging, cancellation and retry,
+unchanged project/time, and ruler scrubbing.
+
+In either playhead mode, pressing the ruler during playback pauses the transport. Releasing resumes
+at the scrubbed time and original speed/direction; scrubbing while stopped stays stopped. Escape
+restores the starting time and resumes on release. Explicit Stop or a sequence change cancels
+the pending resume. Releasing at the end does not apply the fresh-Play return-to-start preference.
+`timeline_escape_ui::timeline_scrub_*` tests pause/resume and explicit Stop; `settings_ui` checks the
+draft, disabled dropdown, Cancel and OK behavior.
+
 ## Export range warnings
 
 The Export panel shows the selected range's length in sequence frames and seconds beside Range
@@ -226,3 +248,29 @@ than one clip is selected, matching the existing Speed control.
 
 `clip_dialogs_ui::duration_text_edits_speed_and_rejects_invalid_input` exercises real
 text input, validation, application, Cancel, and Undo/Redo.
+
+
+## Managed desktop projects
+
+The desktop shell enables `app.project_selection_runtime.enabled`. This opts its menus into
+Project Selection and project-folder creation/Save As. A session marked `project_closed` also
+starts with this capability enabled. Existing embedding hosts retain file-based dialogs unless
+they opt in; web hosts retain their browser storage. The flag is host state and is never restored
+from serialized UI state. Explicit `engine.execute` transient-project commands remain available
+for automation; desktop menu actions use the managed-folder dialogs.
+
+## Shared text styles and pasted motion
+
+Select multiple timeline clips, then edit Text and Appearance in Properties to update every
+text layer in those clips. Controls show the first text layer; only changed properties are applied.
+Font, font size/style, fill, outlines, spacing, background and shadow share one undoable edit per
+drag. Each clip keeps its words. A changed character property also clears that property's local
+character overrides; other overrides survive. Locked target tracks reject the edit.
+
+Copy a source clip with Ctrl+C, select destination clips, then use Alt+V (or Ctrl+Alt+V) to open
+Paste Attributes. The grid selects clip Motion, Opacity and other attributes independently.
+The text choices independently paste font/size, color, outlines, spacing, background and shadow.
+Text Layer Motion additionally copies text-layer position, anchor, scale, rotation and opacity,
+matching text layers in stacking order, without replacing words or styles. Scale Attribute Times
+fits the keyframes to each destination's duration; disable it to preserve their timing offsets.
+On macOS use Cmd in place of Ctrl.

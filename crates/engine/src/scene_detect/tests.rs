@@ -27,6 +27,8 @@ fn make_cut_movie(path: &Path, shots: &[(DemoScene, i64)], w: u32, h: u32) {
         // each shot starts at a different point of its scene
         let src = GeneratorSource::new(Generator::Demo(*scene), w, h, rate, rate.tick_of(200));
         let clip = MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(Generator::Demo(*scene)),
             info: src.info().clone(),
             interpret: Default::default(),

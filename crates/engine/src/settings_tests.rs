@@ -23,6 +23,41 @@ fn set(s: &mut Session, key: &str, value: Value) {
 }
 
 #[test]
+fn fixed_playhead_preferences_require_smooth_scroll_and_persist() {
+    let mut p = Preferences::default();
+    assert!(!p.timeline.fixed_playhead);
+    p.set("timeline.fixedPlayhead", json!(true)).unwrap();
+    assert_eq!(p.timeline.auto_scroll, "smoothScroll");
+    for mode in ["noScroll", "pageScroll", "smoothScroll"] {
+        p.set("timeline.autoScroll", json!(mode)).unwrap();
+        assert_eq!(p.timeline.auto_scroll, "smoothScroll");
+    }
+    let loaded = Preferences::from_value(json!({"timeline":{"fixedPlayhead":true,"autoScroll":"pageScroll"}}));
+    assert!(loaded.timeline.fixed_playhead);
+    assert_eq!(loaded.timeline.auto_scroll, "smoothScroll");
+    let loaded = Preferences::from_value(p.to_value());
+    assert!(loaded.timeline.fixed_playhead);
+    assert_eq!(loaded.timeline.auto_scroll, "smoothScroll");
+    for bad in [json!(null), json!("true"), json!(-1), json!([]), json!({})] {
+        let before = p.to_value();
+        assert!(p.set("timeline.fixedPlayhead", bad).is_err());
+        assert_eq!(p.to_value(), before);
+    }
+    p.set("timeline.fixedPlayhead", json!(false)).unwrap();
+    p.set("timeline.autoScroll", json!("pageScroll")).unwrap();
+    assert_eq!(p.timeline.auto_scroll, "pageScroll");
+    assert!(!Preferences::from_value(json!({"timeline":{"autoScroll":"pageScroll"}})).timeline.fixed_playhead);
+    let mut s = demo();
+    set(&mut s, "timeline.fixedPlayhead", json!(true));
+    s.execute("prefs.set", json!({"values":{"timeline.fixedPlayhead":false,"timeline.autoScroll":"pageScroll"}})).unwrap();
+    assert!(!s.prefs.timeline.fixed_playhead);
+    assert_eq!(s.prefs.timeline.auto_scroll, "pageScroll");
+    s.execute("prefs.set", json!({"values":{"timeline.fixedPlayhead":true,"timeline.autoScroll":"noScroll"}})).unwrap();
+    assert!(s.prefs.timeline.fixed_playhead);
+    assert_eq!(s.prefs.timeline.auto_scroll, "smoothScroll");
+}
+
+#[test]
 fn interface_language_persists_and_rejects_hostile_values() {
     let dir = tmp_dir("interface-language");
     let path = dir.join("preferences.json");
@@ -592,6 +627,15 @@ fn graphics_text_uses_the_text_settings() {
     assert_eq!(l.params["font"].value, ParamValue::Text("JetBrains Mono".into()));
 }
 
+fn finish_transcription(s: &mut Session) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !s.transcription_jobs.is_empty() && std::time::Instant::now() < deadline {
+        s.poll_persistence();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(s.transcription_jobs.is_empty(), "transcription worker did not finish");
+}
+
 #[test]
 fn auto_transcribe_on_import_and_transcription_defaults() {
     use filmcraft_project::{Transcript, Word};
@@ -613,6 +657,7 @@ fn auto_transcribe_on_import_and_transcription_defaults() {
     set(&mut s, "mediaAnalysis.autoTranscribeScope", json!("allImported"));
     let r = s.execute("file.import", json!({"paths": [mov.to_string_lossy()]})).unwrap();
     let c = ItemId(r["items"][0].as_u64().unwrap());
+    finish_transcription(&mut s);
     assert_eq!(s.project.transcripts[&c].words[0].text, "hello");
     assert!(matches!(s.project.item(c).unwrap().kind, ItemKind::Media(_)));
     // the model setting is validated against the catalogue
@@ -643,6 +688,7 @@ fn auto_transcribe_sequence_clips_after_insertion() {
         s.execute("source.open", json!({"item": item.0})).unwrap();
         let params = if command == "timeline.place" { json!({"item": item.0, "track": "V1", "audioTrack": "A1", "audio": audio}) } else { json!({}) };
         s.execute(command, params).unwrap();
+        finish_transcription(&mut s);
         assert_eq!(s.active_sequence().unwrap().audio_tracks.iter().flat_map(|t| &t.items).any(|c| c.item == item), audio);
         let automatic = s.project.transcripts.contains_key(&item);
         if automatic {
@@ -727,6 +773,7 @@ fn auto_transcribe_sequence_clips_from_clipboard_and_sequence_expansion() {
             _ => (route, json!({})),
         };
         s.execute(command, params).unwrap();
+        finish_transcription(&mut s);
         assert_eq!(s.project.transcripts[&item].words[0].text, "hello", "{route}");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "{route}");
     }
@@ -734,34 +781,34 @@ fn auto_transcribe_sequence_clips_from_clipboard_and_sequence_expansion() {
 }
 
 #[test]
-fn auto_transcribe_sequence_clips_share_undo_and_preserve_existing_transcripts() {
+fn auto_transcribe_sequence_clips_complete_in_their_own_undo_step() {
     let dir = tmp_dir("prefs-sequence-transcribe-history");
     for limit in [0, 1, 200] {
         let (mut s, item, calls) = sequence_transcription_session(&dir, "ok", limit);
         set(&mut s, "mediaAnalysis.autoTranscribe", json!(true));
         let before = s.project.to_json();
-        let undo = s.history.undo.clone();
+        let undo = s.history.undo.len();
         s.execute("source.insert", json!({})).unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let placed = s.project.to_json();
+        finish_transcription(&mut s);
         let after = s.project.to_json();
-        assert_eq!(filmcraft_project::Project::from_json(&after).unwrap().to_json(), after);
-        assert_eq!(s.history.undo.len(), (undo.len() + 1).min(limit));
+        assert_eq!(s.project.transcripts[&item].words[0].text, "hello");
+        assert_eq!(s.history.undo.len(), (undo + 2).min(limit));
         if limit > 0 {
+            s.undo();
+            assert_eq!(s.project.to_json(), placed);
             if limit > 1 {
-                for (old, kept) in undo.iter().zip(&s.history.undo) {
-                    assert_eq!(old.0, kept.0);
-                    assert!(std::sync::Arc::ptr_eq(&old.1, &kept.1), "older undo steps must be retained");
-                }
+                s.undo();
+                assert_eq!(s.project.to_json(), before);
+                s.redo();
             }
-            s.execute("edit.undo", json!({})).unwrap();
-            assert_eq!(s.project.to_json(), before);
-            s.execute("edit.redo", json!({})).unwrap();
+            s.redo();
             assert_eq!(s.project.to_json(), after);
-            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "redo must restore the saved transcript");
         }
         let transcript = s.project.transcripts[&item].clone();
         s.execute("source.insert", json!({})).unwrap();
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "reuse the media's existing transcript");
+        finish_transcription(&mut s);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(std::sync::Arc::ptr_eq(&s.project.transcripts[&item], &transcript));
     }
     std::fs::remove_dir_all(dir).unwrap();
@@ -782,15 +829,16 @@ fn auto_transcribe_sequence_clips_failures_warn_and_keep_the_placement() {
         let before = s.project.to_json();
         let undo = s.history.undo.len();
         s.execute("source.insert", json!({})).unwrap();
+        finish_transcription(&mut s);
         assert!(s.active_sequence().unwrap().audio_tracks[0].items.iter().any(|c| c.item == item));
         assert!(!s.project.transcripts.contains_key(&item));
         assert_eq!(s.history.undo.len(), undo + 1);
         let reason = match outcome {
             "error" => "test recognizer failed",
-            "panic" => "internal error during automatic transcription",
+            "panic" => "internal",
             _ => "not available in this build",
         };
-        assert!(s.log.entries.iter().any(|e| e.level == crate::panels::Level::Warning && e.source == "source.insert" && e.message.contains(reason)));
+        assert!(s.log.entries.iter().any(|e| e.message.contains(reason)), "{:?}", s.log.entries);
         assert!(s.events.iter().any(|e| matches!(e, crate::Event::Toast { message, error: true } if message.contains(reason))));
         s.execute("edit.undo", json!({})).unwrap();
         assert_eq!(s.project.to_json(), before);

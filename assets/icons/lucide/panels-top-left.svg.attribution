@@ -1,0 +1,8 @@
+asset: panels-top-left.svg
+title: Lucide panels-top-left icon
+author: Lucide Contributors; Cole Bemis (Feather-derived icons)
+source: https://raw.githubusercontent.com/lucide-icons/lucide/f12b0de177fbc2a6795e99be065887e72b237123/icons/panels-top-left.svg
+license: ISC AND MIT
+license-file: assets/icons/lucide/LICENSE.txt
+added: 2026-11-02 by FilmCraft contributors
+notes: Unmodified upstream SVG, pinned Lucide 0.468.0.

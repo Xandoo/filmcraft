@@ -64,6 +64,8 @@ fn project(src: (u32, u32), src_par: (u32, u32), seq: (u32, u32), seq_par: (u32,
     let mut p = Project::new("par");
     let source = halves(src.0, src.1, src_par);
     let clip = MediaClip {
+        stream: None,
+        recording: None,
         media: MediaRef::File { path: "halves.mov".into() },
         info: source.info.clone(),
         interpret: Default::default(),

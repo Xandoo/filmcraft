@@ -27,6 +27,14 @@ fn saved_project(root: &std::path::Path) -> (String, Vec<ItemId>) {
     std::fs::create_dir_all(&proj).unwrap();
     let path = proj.join("p.fcproj").to_string_lossy().into_owned();
     s.execute("file.save", json!({"path": path})).unwrap();
+    // Complete thumbnail rendering before dropping this session and immediately moving its
+    // media directory: Windows keeps a directory in place while the worker reads its files.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while crate::project_workspace::pending(&s) && std::time::Instant::now() < deadline {
+        s.poll_persistence();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!crate::project_workspace::pending(&s), "project thumbnail did not settle");
     (path, items)
 }
 

@@ -145,6 +145,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, p: PanelKind, rect: Rect)
         PanelKind::Tools => tools::show(app, ui, rect),
         PanelKind::Effects => effects::show(app, ui, rect),
         PanelKind::EffectControls => effect_controls::show(app, ui, rect),
+        PanelKind::DopeSheet => animation::show(app, ui, rect, false),
+        PanelKind::CurveEditor => animation::show(app, ui, rect, true),
         PanelKind::AudioMeters => meters::show(app, ui, rect),
         PanelKind::LumetriColor => lumetri::show(app, ui, rect),
         PanelKind::Properties if graphics::graphic_selected(app) => graphics::properties(app, ui, rect),
@@ -481,7 +483,9 @@ pub(crate) fn panel_items(app: &mut FilmcraftApp, ui: &mut egui::Ui, p: PanelKin
     close
 }
 
+pub(crate) mod animation;
 pub(crate) mod transcript_cache;
+pub(crate) mod transcription;
 
 pub mod custom_colors;
 pub mod marker_properties;

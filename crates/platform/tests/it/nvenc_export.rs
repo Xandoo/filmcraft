@@ -22,6 +22,8 @@ fn project(w: u32, h: u32, frames: i64) -> (Arc<Project>, filmcraft_project::Ite
         &info.name.clone(),
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(g.generator.clone()),
             info,
             interpret: Default::default(),

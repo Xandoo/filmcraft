@@ -67,6 +67,8 @@ fn audio_clips_from_one_container_mix_distinct_streams() {
         "two.mov",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::File { path: "two.mov".into() },
             info: info.clone(),
             interpret: Default::default(),
@@ -667,6 +669,8 @@ fn nested_tone(inner_rate: u32) -> (Project, ItemId, SourceMap, Arc<Tone>) {
         "tone",
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::File { path: "/tone.wav".into() },
             info: info.clone(),
             interpret: Default::default(),

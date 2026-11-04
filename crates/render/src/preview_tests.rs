@@ -13,6 +13,8 @@ fn add_gen(p: &mut Project, g: GeneratorSource) -> ItemId {
         &info.name.clone(),
         Label::Iris,
         ItemKind::Media(Box::new(MediaClip {
+            stream: None,
+            recording: None,
             media: MediaRef::Generator(g.generator.clone()),
             info,
             interpret: Default::default(),

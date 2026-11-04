@@ -22,6 +22,8 @@ pub enum PanelKind {
     History,
     Source,
     EffectControls,
+    DopeSheet,
+    CurveEditor,
     AudioClipMixer,
     Metadata,
     Program,
@@ -44,7 +46,7 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 28] = [
+    pub const ALL: [PanelKind; 30] = [
         PanelKind::Project,
         PanelKind::MediaBrowser,
         PanelKind::Libraries,
@@ -54,6 +56,8 @@ impl PanelKind {
         PanelKind::History,
         PanelKind::Source,
         PanelKind::EffectControls,
+        PanelKind::DopeSheet,
+        PanelKind::CurveEditor,
         PanelKind::AudioClipMixer,
         PanelKind::Metadata,
         PanelKind::Program,
@@ -85,6 +89,8 @@ impl PanelKind {
             PanelKind::History => "History",
             PanelKind::Source => "Source",
             PanelKind::EffectControls => "Effect Controls",
+            PanelKind::DopeSheet => "Dope Sheet",
+            PanelKind::CurveEditor => "Curve Editor",
             PanelKind::AudioClipMixer => "Audio Clip Mixer",
             PanelKind::Metadata => "Metadata",
             PanelKind::Program => "Program",

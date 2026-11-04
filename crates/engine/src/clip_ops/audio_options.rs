@@ -64,7 +64,7 @@ pub(super) fn extract_audio(s: &mut Session, p: &Value) -> Result<Value> {
                 .path
                 .as_deref()
                 .and_then(|x| std::path::Path::new(x).parent())
-                .map(|d| d.to_string_lossy().into_owned())
+                .map(|d| d.join("Extracted Audio").to_string_lossy().into_owned())
                 .or_else(|| match &m.media {
                     MediaRef::File { path } => std::path::Path::new(path).parent().map(|d| d.to_string_lossy().into_owned()),
                     _ => None,
@@ -94,6 +94,9 @@ pub(super) fn extract_audio(s: &mut Session, p: &Value) -> Result<Value> {
             k += 1;
         }
         let path_s = path.to_string_lossy().into_owned();
+        if !cfg!(target_arch = "wasm32") {
+            std::fs::create_dir_all(&dir).map_err(|e| EngineError::Other(format!("{dir}: {e}")))?;
+        }
         s.services.write_file(&path_s, &bytes).map_err(|e| EngineError::Other(format!("{path_s}: {e}")))?;
         let bin = s.project.root.parent_of(item).filter(|b| *b != s.project.root.id);
         let id = crate::commands::import_bytes(s, &path_s, bytes.into(), bin)?;

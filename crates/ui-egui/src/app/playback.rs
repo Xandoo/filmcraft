@@ -16,6 +16,10 @@ impl FilmcraftApp {
     }
 
     pub fn play(&mut self, speed: f64) {
+        self.start_play(speed, true);
+    }
+
+    fn start_play(&mut self, speed: f64, restart_at_end: bool) {
         self.stop_source();
         if self.session.active_sequence().is_none() {
             return;
@@ -24,7 +28,8 @@ impl FilmcraftApp {
         // beginning when restarting playback")
         let dur = self.session.active_sequence().map(|q| q.duration()).unwrap_or_default();
         // (not while a voice-over take starts: it was put exactly where the take must begin, e.g. on empty timeline past the end)
-        if speed > 0.0
+        if restart_at_end
+            && speed > 0.0
             && self.session.prefs.timeline.return_to_beginning
             && !self.session.voiceover.recording()
             && self.session.playhead() >= dur - self.session.sequence_rate().frame_duration()
@@ -113,6 +118,7 @@ impl FilmcraftApp {
     }
 
     pub fn stop(&mut self) {
+        self.tl.scrub_resume = None;
         self.playback.playing = false;
         self.playback.tts_preview = false;
         self.playback.stop_at = None;
@@ -143,6 +149,26 @@ impl FilmcraftApp {
     pub(crate) fn stop_for_scrub(&mut self) {
         if self.transport_running() || self.playback.tts_preview {
             self.stop();
+        }
+    }
+
+    /// Pause once, retaining the speed and owner until the pointer is released.
+    pub(crate) fn begin_timeline_scrub(&mut self) {
+        let resume =
+            if self.playback.playing && !self.playback.tts_preview { self.session.state.active_sequence.map(|id| (id, self.playback.speed)) } else { None };
+        self.stop_source();
+        self.stop_for_scrub();
+        self.tl.scrub_resume = resume;
+    }
+
+    pub(super) fn finish_timeline_scrub(&mut self, ctx: &egui::Context) {
+        if self.tl.scrub_resume.is_some()
+            && !ctx.input(|i| i.pointer.primary_down())
+            && let Some((sequence, speed)) = self.tl.scrub_resume.take()
+            && self.session.state.active_sequence == Some(sequence)
+        {
+            // Unlike a fresh Play command, releasing at the end must not jump to the start.
+            self.start_play(speed, false);
         }
     }
 
@@ -375,6 +401,26 @@ mod voiceover_playback_tests {
 #[cfg(test)]
 mod smooth_playhead_tests {
     use super::*;
+
+    #[test]
+    fn timeline_scrub_resumes_at_end_without_restarting_and_respects_owner() {
+        let mut app = playing_at(1.0);
+        app.session.prefs.timeline.return_to_beginning = true;
+        app.begin_timeline_scrub();
+        let end = app.session.active_sequence().unwrap().duration();
+        app.session.set_playhead(end);
+        let dropped = app.session.playhead();
+        app.finish_timeline_scrub(&egui::Context::default());
+        assert!(app.playback.playing);
+        assert_eq!(app.session.playhead(), dropped);
+        assert_eq!(app.playback.anchor_tick, dropped);
+        app.begin_timeline_scrub();
+        assert!(app.tl.scrub_resume.is_some());
+        app.session.state.active_sequence = None;
+        app.finish_timeline_scrub(&egui::Context::default());
+        assert!(!app.playback.playing);
+        assert!(app.tl.scrub_resume.is_none());
+    }
 
     fn playing_at(now: f64) -> FilmcraftApp {
         let mut session = Session::default();

@@ -350,6 +350,8 @@ pub(crate) fn media_info(name: &str, spec: &MediaSpec) -> MediaInfo {
 
 pub(crate) fn media_clip(media: MediaRef, info: MediaInfo) -> MediaClip {
     MediaClip {
+        stream: None,
+        recording: None,
         media,
         info,
         interpret: Interpretation::default(),
@@ -922,6 +924,8 @@ mod tests {
             "Clip",
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::File { path: "/path/to/clip.mp4".into() },
                 info,
                 interpret: Default::default(),

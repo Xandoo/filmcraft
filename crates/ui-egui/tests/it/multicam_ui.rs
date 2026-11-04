@@ -35,6 +35,8 @@ fn make_movie(path: &Path, scene: DemoScene, frames: i64) {
     let dur = rate.tick_of(frames);
     let src = GeneratorSource::new(Generator::Demo(scene), W, H, rate, dur);
     let clip = MediaClip {
+        stream: None,
+        recording: None,
         media: MediaRef::Generator(Generator::Demo(scene)),
         info: src.info().clone(),
         interpret: Default::default(),

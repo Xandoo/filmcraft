@@ -82,12 +82,72 @@ const DUPLICATE_FRAME_COLORS: [Color32; filmcraft_engine::sequence_tools::DUPLIC
 ];
 const SNAP_PX: f32 = 9.0;
 
+/// Anchor in points, including hostile saved state and very narrow views.
+pub(super) fn fixed_anchor(fraction: f32, width: f32) -> f32 {
+    if !width.is_finite() || width <= 0.0 {
+        return 0.0;
+    }
+    if width <= 32.0 {
+        return width * 0.5;
+    }
+    let margin = (width * 0.1).max(16.0);
+    let fraction = if fraction.is_finite() { fraction } else { 0.5 };
+    (fraction * width).clamp(margin, width - margin)
+}
+
+#[cfg(test)]
+mod fixed_playhead_tests {
+    use super::*;
+    #[test]
+    fn anchor_is_bounded_for_hostile_and_narrow_views() {
+        for width in [0.0, 1.0, 31.0, 32.0, 33.0, 800.0, f32::NAN, f32::INFINITY] {
+            for fraction in [-1.0, 0.1, 0.5, 0.9, 2.0, f32::NAN, f32::INFINITY] {
+                let x = fixed_anchor(fraction, width);
+                assert!(x.is_finite());
+                if width.is_finite() && width > 0.0 {
+                    assert!((0.0..=width).contains(&x));
+                }
+            }
+        }
+        assert_eq!(fixed_anchor(0.0, 800.0), 80.0);
+        assert_eq!(fixed_anchor(1.0, 800.0), 720.0);
+    }
+    #[test]
+    fn fixed_mode_preserves_time_during_zoom_and_allows_start_padding() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", json!({})).unwrap();
+        session.set_playhead(Tick::ZERO);
+        let sequence = session.active_sequence().unwrap().clone();
+        let id = session.state.active_sequence.unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.ui.timeline.fixed_playhead = true;
+        app.ui.timeline.playhead_anchor = 0.25;
+        app.ui.timeline.fit_pending = false;
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(800.0, 300.0));
+        for pps in [40.0, 80.0, 20.0] {
+            app.ui.timeline.pps = pps;
+            app.ui.timeline.target_pps = pps;
+            let mut output = ctx.run_ui(Default::default(), |_| animate_view(&mut app, &ctx, rect, id, &sequence));
+            output.textures_delta.clear();
+            assert!((app.ui.timeline.scroll + 200.0 / pps).abs() < 1e-9);
+            assert_eq!(app.session.playhead(), Tick::ZERO);
+        }
+    }
+}
+
 /// Waveform peaks are kept per audio stream: (item, index into the media's `audio_streams`).
 pub type PeakKey = (ItemId, usize);
 
 /// Transient interaction state.
 #[derive(Default)]
 pub struct TlState {
+    /// Sequence and transport speed to resume after a ruler scrub releases.
+    pub scrub_resume: Option<(ItemId, f64)>,
+    /// Anchor before a fixed-playhead drag, for Escape cancellation.
+    pub fixed_anchor_drag: Option<f32>,
+    /// Pointer origin and playhead before dragging the ruler under the fixed anchor.
+    pub fixed_ruler_drag: Option<(f32, Tick)>,
     pub drag: Option<Drag>,
     /// What the primary button went down on in the Timeline (#259); see [`Pressed`].
     pub pressed: Option<Pressed>,
@@ -470,6 +530,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 
     // ---- interaction
     interact(app, ui, seq, &layout, rect);
+    // Panning and the scroll bar navigate time under the fixed anchor. Zooming does not seek.
+    if app.ui.timeline.fixed_playhead && app.tl.fixed_anchor_drag.is_none() && app.ui.timeline.pps == layout.pps && app.ui.timeline.scroll != layout.scroll {
+        let v = &app.ui.timeline;
+        let seconds = v.scroll + fixed_anchor(v.playhead_anchor, content.width()) as f64 / v.pps;
+        if seconds.is_finite() {
+            app.session.set_playhead(seq.settings.frame_rate.snap_nearest(Tick::from_seconds_f64(seconds.max(0.0))));
+        }
+    }
     super::timeline_volume::interact(app, ui, seq, &layout, aclip);
     // track keyframes (drawn and edited on top of the clips)
     super::timeline_automation::show(app, ui, seq, &layout, aclip);
@@ -530,6 +598,17 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
         if (v.scroll - v.target_scroll).abs() * v.pps < 0.05 {
             v.scroll = v.target_scroll;
         }
+    }
+    if app.ui.timeline.fixed_playhead {
+        let ph = app.session.playhead().seconds();
+        let v = &mut app.ui.timeline;
+        let anchor = fixed_anchor(v.playhead_anchor, content.width()) as f64;
+        v.playhead_anchor = if content.width() > 0.0 { anchor as f32 / content.width() } else { 0.5 };
+        v.scroll = ph - anchor / v.pps;
+        v.target_scroll = ph - anchor / v.target_pps;
+        v.seen_playhead = Some((seq_id, ph));
+        app.tl.zoom_anchor = None;
+        return;
     }
     // follow playhead while playing (Settings ▸ Timeline ▸ Timeline Playback Auto-Scrolling)
     let auto_scroll = app.session.prefs.timeline.auto_scroll.clone();

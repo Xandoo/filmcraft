@@ -13,6 +13,123 @@ use crate::{Result, Session, commands::bad};
 const COMMAND: &str = "effects.moveKeyframes";
 const MAX_KEYS: usize = 4096;
 
+pub(crate) fn set_fields(k: &mut Keyframe, p: &Value) -> Result<()> {
+    const COMMAND: &str = "effects.editKeyframes";
+    if let Some(value) = p.get("value") {
+        k.value = crate::commands::json_to_param(&k.value, value).ok_or_else(|| bad(COMMAND, "value has the wrong type"))?;
+    }
+    let components = match k.value {
+        filmcraft_project::ParamValue::Float(_) => 1,
+        filmcraft_project::ParamValue::Vec2(_) => 2,
+        filmcraft_project::ParamValue::Color(_) => 4,
+        _ => 0,
+    };
+    for (name, target) in [("inTangents", &mut k.in_tangents), ("outTangents", &mut k.out_tangents)] {
+        if let Some(raw) = p.get(name) {
+            let values = raw.as_array().ok_or_else(|| bad(COMMAND, "tangents must be arrays"))?;
+            if !values.is_empty() && (values.len() != components || components == 0) {
+                return Err(bad(COMMAND, "tangent component count does not match property"));
+            }
+            let slopes: Result<Vec<f64>> =
+                values.iter().map(|v| v.as_f64().filter(|v| v.is_finite() && v.abs() <= 1e12).ok_or_else(|| bad(COMMAND, "invalid tangent slope"))).collect();
+            *target = slopes?;
+        }
+    }
+    for (name, target) in [("inInfluence", &mut k.in_influence), ("outInfluence", &mut k.out_influence)] {
+        if let Some(raw) = p.get(name) {
+            *target = raw.as_f64().filter(|v| v.is_finite() && (0.01..=1.0).contains(v)).ok_or_else(|| bad(COMMAND, "influence must be between 0.01 and 1"))?;
+        }
+    }
+    if let Some(raw) = p.get("tangentsLinked") {
+        k.tangents_linked = raw.as_bool().ok_or_else(|| bad(COMMAND, "tangentsLinked must be boolean"))?;
+    }
+    if p.get("interpolation").is_some() {
+        k.interp = crate::commands::interpolation_p(p);
+        if matches!(k.interp, filmcraft_project::Interpolation::Linear | filmcraft_project::Interpolation::Hold) {
+            k.in_tangents.clear();
+            k.out_tangents.clear();
+        }
+    }
+    if k.tangents_linked && ["inTangents", "outTangents", "tangentsLinked"].iter().any(|name| p.get(name).is_some()) {
+        let slopes = if p.get("inTangents").is_some() && p.get("outTangents").is_none() {
+            k.in_tangents.clone()
+        } else if !k.out_tangents.is_empty() {
+            k.out_tangents.clone()
+        } else {
+            k.in_tangents.clone()
+        };
+        k.in_tangents = slopes.clone();
+        k.out_tangents = slopes;
+    }
+    for tangents in [&k.in_tangents, &k.out_tangents] {
+        if !tangents.is_empty() && (tangents.len() != components || tangents.iter().any(|v| !v.is_finite() || v.abs() > 1e12)) {
+            return Err(bad(COMMAND, "invalid tangent components"));
+        }
+    }
+    let valid_value = match &k.value {
+        filmcraft_project::ParamValue::Float(v) => v.is_finite(),
+        filmcraft_project::ParamValue::Color(v) => v.iter().all(|v| v.is_finite()),
+        filmcraft_project::ParamValue::Vec2(v) => !v.x.is_infinite() && !v.y.is_infinite(),
+        _ => true,
+    };
+    if !valid_value {
+        return Err(bad(COMMAND, "keyframe value must be finite (point coordinates may be Auto)"));
+    }
+    Ok(())
+}
+
+/// Mixed additions, deletions and component edits are one validated transaction.
+pub(crate) fn edit_many(s: &mut Session, p: &Value) -> Result<Value> {
+    const COMMAND: &str = "effects.editKeyframes";
+    let raw = p
+        .get("edits")
+        .and_then(Value::as_array)
+        .filter(|v| !v.is_empty() && v.len() <= MAX_KEYS)
+        .ok_or_else(|| bad(COMMAND, "need between 1 and 4096 edits"))?;
+    let mut edits = Vec::with_capacity(raw.len());
+    let mut seen = HashSet::new();
+    for entry in raw {
+        let key: Key = serde_json::from_value(entry.get("key").cloned().ok_or_else(|| bad(COMMAND, "need key"))?).map_err(|_| bad(COMMAND, "invalid key"))?;
+        if key.param.len() > 256 || !seen.insert(key.clone()) {
+            return Err(bad(COMMAND, "duplicate or invalid key"));
+        }
+        edits.push((key, entry.clone()));
+    }
+    s.edit_sequence("Edit Keyframes", |q, _, _| {
+        for (key, entry) in &edits {
+            let param = param_mut(q, &(key.clip, key.effect, key.mask, key.param.clone()), COMMAND)?;
+            match entry.get("operation").and_then(Value::as_str).unwrap_or("set") {
+                "delete" => {
+                    if !param.remove_keyframe_at(key.time) {
+                        return Err(bad(COMMAND, "keyframe does not exist"));
+                    }
+                }
+                "put" => {
+                    let mut k = match entry.get("keyframe") {
+                        Some(v) => serde_json::from_value::<Keyframe>(v.clone()).map_err(|_| bad(COMMAND, "invalid keyframe"))?,
+                        None => Keyframe::new(key.time, param.value_at(key.time)),
+                    };
+                    if std::mem::discriminant(&k.value) != std::mem::discriminant(&param.value) {
+                        return Err(bad(COMMAND, "keyframe value has the wrong type"));
+                    }
+                    k.time = key.time;
+                    set_fields(&mut k, entry)?;
+                    param.remove_keyframe_at(key.time);
+                    let index = param.keyframes.partition_point(|v| v.time < key.time);
+                    param.keyframes.insert(index, k);
+                }
+                "set" => {
+                    let k = param.keyframes.iter_mut().find(|k| k.time == key.time).ok_or_else(|| bad(COMMAND, "keyframe does not exist"))?;
+                    set_fields(k, entry)?;
+                }
+                _ => return Err(bad(COMMAND, "unknown keyframe operation")),
+            }
+        }
+        Ok(())
+    })?;
+    Ok(json!({"edited": edits.len()}))
+}
+
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(deny_unknown_fields)]
 struct Key {
@@ -123,8 +240,37 @@ pub(crate) fn interpolate_many(s: &mut Session, p: &Value) -> Result<Value> {
         for key in &keys {
             let lane = (key.clip, key.effect, key.mask, key.param.clone());
             let param = param_mut(sequence, &lane, SET)?;
-            let k = param.keyframes.iter_mut().find(|k| k.time == key.time).ok_or_else(|| bad(SET, "keyframe does not exist"))?;
+            let index = param.keyframes.iter().position(|k| k.time == key.time).ok_or_else(|| bad(SET, "keyframe does not exist"))?;
+            let slopes = if kind == filmcraft_project::Interpolation::AutoBezier {
+                let a = param.keyframes.get(index.saturating_sub(1));
+                let b = param.keyframes.get((index + 1).min(param.keyframes.len().saturating_sub(1)));
+                match (a, b) {
+                    (Some(a), Some(b)) if b.time > a.time => {
+                        let components = |v: &filmcraft_project::ParamValue| match v {
+                            filmcraft_project::ParamValue::Float(v) => vec![*v],
+                            filmcraft_project::ParamValue::Vec2(v) => vec![v.x, v.y],
+                            filmcraft_project::ParamValue::Color(v) => v.iter().map(|v| *v as f64).collect(),
+                            _ => Vec::new(),
+                        };
+                        let seconds = (b.time - a.time).seconds();
+                        components(&a.value)
+                            .iter()
+                            .zip(components(&b.value))
+                            .map(|(a, b)| {
+                                let slope = (b - a) / seconds;
+                                if slope.is_finite() { slope.clamp(-1e12, 1e12) } else { 0.0 }
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                    _ => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+            let k = param.keyframes.get_mut(index).ok_or_else(|| bad(SET, "keyframe does not exist"))?;
             k.interp = kind;
+            k.in_tangents = slopes.clone();
+            k.out_tangents = slopes;
         }
         Ok(())
     })?;
@@ -155,6 +301,63 @@ mod tests {
     fn values(s: &Session, key: &Value) -> Vec<Keyframe> {
         let it = s.active_sequence().unwrap().find_item(ClipId(key["clip"].as_u64().unwrap())).unwrap().1;
         it.effects[key["effect"].as_u64().unwrap() as usize].params[key["param"].as_str().unwrap()].keyframes.clone()
+    }
+
+    #[test]
+    fn batch_tangent_edits_are_atomic_and_reject_hostile_values() {
+        let (mut s, keys) = fixture();
+        let before = s.project.to_json();
+        let undo = s.history.undo.len();
+        let invalid = json!({"clip":u64::MAX,"effect":0,"param":"scale","time":0});
+        for edits in [
+            json!([{"key":keys[0],"outTangents":[1e30]}]),
+            json!([{"key":keys[0],"outTangents":[1,2]}]),
+            json!([{"key":keys[0],"outInfluence":0}]),
+            json!([{"key":keys[0],"outTangents":[1]},{"key":invalid,"value":2}]),
+        ] {
+            assert!(s.execute("effects.editKeyframes", json!({"edits":edits})).is_err());
+            assert_eq!(s.project.to_json(), before);
+            assert_eq!(s.history.undo.len(), undo);
+        }
+        s.execute("effects.editKeyframes", json!({"edits":[{"key":keys[0],"outTangents":[7.0],"inTangents":[7.0],"interpolation":"bezier"}]})).unwrap();
+        assert_eq!(values(&s, &keys[0])[0].out_tangents, vec![7.0]);
+        s.undo();
+        assert_eq!(s.project.to_json(), before);
+    }
+
+    #[test]
+    fn linked_tangent_edits_share_slopes_and_broken_tangents_keep_corners() {
+        let mut key = Keyframe::new(Tick::ZERO, filmcraft_project::ParamValue::Float(0.0));
+        set_fields(&mut key, &json!({"outTangents":[3.0]})).unwrap();
+        assert_eq!(key.in_tangents, vec![3.0]);
+        set_fields(&mut key, &json!({"tangentsLinked":false,"inTangents":[-2.0]})).unwrap();
+        assert_eq!(key.in_tangents, vec![-2.0]);
+        assert_eq!(key.out_tangents, vec![3.0]);
+        set_fields(&mut key, &json!({"tangentsLinked":true})).unwrap();
+        assert_eq!(key.in_tangents, key.out_tangents);
+    }
+
+    #[test]
+    fn automatic_point_coordinates_never_create_unsaveable_tangents() {
+        let (mut s, keys) = fixture();
+        let clip = ClipId(keys[0]["clip"].as_u64().unwrap());
+        let effect = keys[0]["effect"].as_u64().unwrap() as usize;
+        let second = Tick::from_seconds_f64(1.0);
+        s.edit_sequence("Auto coordinates", |q, _, _| {
+            let p = q.find_item_mut(clip).unwrap().1.effects[effect].params.get_mut("position").unwrap();
+            p.keyframes = [Tick::ZERO, second]
+                .into_iter()
+                .map(|time| Keyframe::new(time, filmcraft_project::ParamValue::Vec2(filmcraft_geom::Vec2::new(f64::NAN, f64::NAN))))
+                .collect();
+            Ok(())
+        })
+        .unwrap();
+        let keys: Vec<Value> = [Tick::ZERO, second].into_iter().map(|time| json!({"clip":clip.0,"effect":effect,"param":"position","time":time.0})).collect();
+        s.execute("effects.setInterpolation", json!({"keyframes":keys,"interpolation":"autoBezier"})).unwrap();
+        for key in &s.active_sequence().unwrap().find_item(clip).unwrap().1.effects[effect].params["position"].keyframes {
+            assert!(key.in_tangents.iter().chain(&key.out_tangents).all(|slope| slope.is_finite()));
+            let _: Keyframe = serde_json::from_value(serde_json::to_value(key).unwrap()).unwrap();
+        }
     }
 
     #[test]

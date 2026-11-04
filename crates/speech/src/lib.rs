@@ -19,6 +19,10 @@
 pub mod diarize;
 pub mod mel;
 pub mod models;
+#[cfg(feature = "gpu-speech")]
+mod neural;
+#[cfg(feature = "gpu-speech")]
+pub mod orukeet;
 pub mod vad;
 #[cfg(feature = "whisper")]
 pub mod whisper;
@@ -90,6 +94,9 @@ pub type ProgressFn<'a> = &'a mut dyn FnMut(f32, &str) -> bool;
 pub trait Transcriber: Send + Sync {
     /// Stable id of the model (`"whisper-base"`), stored in the transcript's `source`.
     fn id(&self) -> String;
+    fn device(&self) -> &str {
+        "CPU"
+    }
     /// Transcribe mono 16 kHz `audio`. Word times are relative to the first sample.
     fn transcribe(&self, audio: &[f32], opts: &Options, progress: ProgressFn) -> Result<Transcript, SpeechError>;
 }
@@ -124,6 +131,20 @@ pub fn load(models_dir: &std::path::Path, id: &str) -> Result<std::sync::Arc<dyn
     if !models::installed(models_dir, m) {
         return Err(SpeechError::NotInstalled(id.into()));
     }
+    load_verified(models_dir, m)
+}
+
+// Only called after the pinned files have been verified by this load operation.
+fn load_verified(models_dir: &std::path::Path, m: &models::ModelInfo) -> Result<std::sync::Arc<dyn Transcriber>, SpeechError> {
+    #[cfg(not(any(feature = "whisper", feature = "gpu-speech")))]
+    let _ = models_dir;
+    let id = m.id;
+    if id == "orukeet" {
+        #[cfg(feature = "gpu-speech")]
+        return Ok(std::sync::Arc::new(orukeet::Orukeet::load(&models::model_dir(models_dir, m), false)?));
+        #[cfg(not(feature = "gpu-speech"))]
+        return Err(SpeechError::Unavailable("Orukeet requires the gpu-speech build feature".into()));
+    }
     #[cfg(feature = "whisper")]
     {
         Ok(std::sync::Arc::new(whisper::Whisper::load(&models::model_dir(models_dir, m), m.id)?))
@@ -136,7 +157,64 @@ pub fn load(models_dir: &std::path::Path, id: &str) -> Result<std::sync::Arc<dyn
 
 /// Whether this build can run speech models.
 pub const fn available() -> bool {
-    cfg!(feature = "whisper")
+    cfg!(feature = "whisper") || cfg!(feature = "gpu-speech")
+}
+
+/// Device selection is explicit; Auto reports CPU fallback through the returned recognizer.
+pub fn load_on_device(directory: &std::path::Path, id: &str, device: &str) -> Result<std::sync::Arc<dyn Transcriber>, SpeechError> {
+    if !["auto", "cpu", "gpu"].contains(&device) {
+        return Err(SpeechError::Model("device must be auto, cpu or gpu".into()));
+    }
+    if device == "cpu" {
+        return load(directory, id);
+    }
+    let model = models::find(id).ok_or_else(|| SpeechError::UnknownModel(id.into()))?;
+    if !models::installed(directory, model) {
+        return Err(SpeechError::NotInstalled(id.into()));
+    }
+    let gpu = || -> Result<std::sync::Arc<dyn Transcriber>, SpeechError> {
+        #[cfg(feature = "gpu-speech")]
+        {
+            if id == "orukeet" {
+                return Ok(std::sync::Arc::new(orukeet::Orukeet::load(&models::model_dir(directory, model), true)?));
+            }
+            #[cfg(feature = "whisper")]
+            {
+                Ok(std::sync::Arc::new(whisper::Whisper::load_gpu(&models::model_dir(directory, model), id)?))
+            }
+            #[cfg(not(feature = "whisper"))]
+            {
+                Err(SpeechError::Unavailable("Whisper is not included in this build".into()))
+            }
+        }
+        #[cfg(not(feature = "gpu-speech"))]
+        {
+            let _ = model;
+            Err(SpeechError::Unavailable("GPU transcription is not included in this build".into()))
+        }
+    };
+    match gpu() {
+        Ok(model) => Ok(model),
+        Err(error) if device == "auto" => {
+            struct Fallback {
+                inner: std::sync::Arc<dyn Transcriber>,
+                reason: String,
+            }
+            impl Transcriber for Fallback {
+                fn id(&self) -> String {
+                    self.inner.id()
+                }
+                fn device(&self) -> &str {
+                    &self.reason
+                }
+                fn transcribe(&self, audio: &[f32], opts: &Options, progress: ProgressFn) -> Result<Transcript, SpeechError> {
+                    self.inner.transcribe(audio, opts, progress)
+                }
+            }
+            Ok(std::sync::Arc::new(Fallback { inner: load_verified(directory, model)?, reason: format!("CPU (GPU unavailable: {error})") }))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Mix a multi-channel buffer down to mono.

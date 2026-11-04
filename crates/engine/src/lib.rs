@@ -46,6 +46,7 @@ pub mod project_manager;
 pub mod project_panel;
 pub mod project_tools;
 pub mod proxies;
+mod recording_placement;
 pub mod relink;
 pub mod remix;
 pub mod scene_detect;
@@ -56,8 +57,11 @@ pub mod settings;
 pub mod shortcut_presets;
 pub mod shortcuts;
 pub mod source_monitor;
+pub mod stream_import;
 pub mod sync;
 pub mod transcript;
+mod transcript_jobs;
+mod transcript_tracks;
 pub mod trim;
 pub mod voiceover;
 
@@ -440,7 +444,16 @@ pub enum Event {
     RevealInProject(ItemId),
 }
 
+pub mod project_workspace;
+
 pub struct Session {
+    /// The desktop launcher has no active document; default sessions remain transient editors.
+    pub project_closed: bool,
+    pub(crate) workspace_save: Option<project_workspace::PendingSave>,
+    pub(crate) workspace_adopted_save: Option<u64>,
+    pub(crate) workspace_thumbnail: Option<project_workspace::Thumbnail>,
+    pub(crate) workspace_thumbnail_next: Option<project_workspace::ThumbnailWork>,
+    pub(crate) workspace_save_generation: u64,
     pub project: Arc<Project>,
     /// Runtime identity of the opened project, stable across edits/undo and renewed on replacement.
     pub project_instance: Arc<()>,
@@ -495,6 +508,8 @@ pub struct Session {
     pub mask_jobs: Vec<masks::PendingTrack>,
     /// Scene Edit Detection jobs whose results are applied when they finish.
     pub scene_jobs: Vec<scene_detect::PendingScene>,
+    pub transcription_jobs: Vec<transcript_jobs::Pending>,
+    pub(crate) speech_cache: transcript_jobs::Cache,
     /// Effect presets (built-in + the user's, persisted in the data directory).
     pub presets: presets::PresetLibrary,
     /// Export presets (built-in + the user's, persisted in the data directory) and favourites.
@@ -568,6 +583,12 @@ impl Default for Session {
 impl Session {
     pub fn new(services: Arc<dyn Services>) -> Self {
         Self {
+            project_closed: false,
+            workspace_save: None,
+            workspace_adopted_save: None,
+            workspace_thumbnail: None,
+            workspace_thumbnail_next: None,
+            workspace_save_generation: 0,
             project: Arc::new(Project::new("Untitled")),
             project_instance: Arc::new(()),
             history: History { limit: 200, ..Default::default() },
@@ -604,6 +625,8 @@ impl Session {
             media_jobs: Vec::new(),
             mask_jobs: Vec::new(),
             scene_jobs: Vec::new(),
+            transcription_jobs: Vec::new(),
+            speech_cache: Default::default(),
             presets: Default::default(),
             export_presets: Default::default(),
             export_queue: Default::default(),
@@ -699,9 +722,11 @@ impl Session {
     /// Apply worker notifications (call regularly, e.g. once per UI frame). Also applies the
     /// results of finished proxy / ingest jobs.
     pub fn poll_persistence(&mut self) {
+        project_workspace::poll(self);
         proxies::poll(self);
         masks::poll(self);
         scene_detect::poll(self);
+        transcript_jobs::poll(self);
         export_tools::pump_queue(self, false);
         panels::log_jobs(self);
         let Some(p) = self.persistence.as_mut() else { return };
@@ -829,6 +854,9 @@ impl Session {
             && let Err(e) = &r
         {
             self.log.push(panels::Level::Error, id, e.to_string());
+        }
+        if r.is_ok() && outermost && (id.starts_with("file.import") || id.starts_with("media.relink") || id == "media.replaceFootage") {
+            project_workspace::remember_access(self);
         }
         self.sync_persistence();
         // playback reads the newest snapshot (mixer moves, mutes… are heard while playing)
@@ -1469,3 +1497,6 @@ mod source_placement_tests;
 mod frame_export_tests;
 #[cfg(test)]
 mod wasm_clock_tests;
+
+#[cfg(test)]
+mod stream_import_tests;

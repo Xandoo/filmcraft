@@ -46,6 +46,8 @@ fn matte(color: [f32; 4], w: u32, h: u32, tone_db: Option<f32>) -> (Arc<Project>
             &info.name.clone(),
             Label::Iris,
             ItemKind::Media(Box::new(MediaClip {
+                stream: None,
+                recording: None,
                 media: MediaRef::Generator(g.generator.clone()),
                 info,
                 interpret: Default::default(),

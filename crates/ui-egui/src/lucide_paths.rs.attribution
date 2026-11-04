@@ -1,0 +1,8 @@
+asset: lucide_paths.rs
+title: Lucide vector geometry
+author: Lucide Contributors; Cole Bemis
+source: https://github.com/lucide-icons/lucide/tree/f12b0de177fbc2a6795e99be065887e72b237123/icons
+license: ISC AND MIT
+license-file: assets/icons/lucide/LICENSE.txt
+added: 2026-11-02 by FilmCraft contributors
+notes: SVG paths sampled to polylines on a 16-unit design grid by scripts/update_lucide.py.

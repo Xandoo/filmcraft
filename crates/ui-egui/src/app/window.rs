@@ -52,6 +52,8 @@ impl FilmcraftApp {
                 PanelKind::LumetriColor | PanelKind::EssentialGraphics | PanelKind::EssentialSound | PanelKind::Properties => PanelKind::Program,
                 PanelKind::Source
                 | PanelKind::EffectControls
+                | PanelKind::DopeSheet
+                | PanelKind::CurveEditor
                 | PanelKind::AudioClipMixer
                 | PanelKind::Metadata
                 | PanelKind::LumetriScopes

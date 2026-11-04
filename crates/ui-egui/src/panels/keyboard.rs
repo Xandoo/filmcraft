@@ -80,6 +80,7 @@ pub const COMMANDS: &[UiCommand] = &[
     uic!("timeline.decreaseVideoHeight", "Decrease Video Tracks Height", [], None),
     uic!("timeline.increaseAudioHeight", "Increase Audio Tracks Height", [], None),
     uic!("timeline.decreaseAudioHeight", "Decrease Audio Tracks Height", [], None),
+    uic!("timeline.fixedPlayhead", "Fixed Playhead", [], None),
     uic!("timeline.nextScreen", "Show Next Screen", [], None),
     uic!("timeline.prevScreen", "Show Previous Screen", [], None),
     uic!("projectPanel.viewList", "List", [], None),
@@ -203,13 +204,31 @@ pub fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Val
             *h = (*h + d).clamp(MIN_TRACK_H, MAX_TRACK_H);
             Ok(json!({"videoTrackHeight": tv.video_track_h, "audioTrackHeight": tv.audio_track_h}))
         }
+        "timeline.fixedPlayhead" => {
+            let enabled = params.get("enabled").and_then(Value::as_bool).unwrap_or(!app.session.prefs.timeline.fixed_playhead);
+            if let Err(e) = app.session.execute("prefs.set", json!({"key": "timeline.fixedPlayhead", "value": enabled})) {
+                return Some(Err(e.to_string()));
+            }
+            let v = &mut app.ui.timeline;
+            v.fixed_playhead = enabled;
+            if !v.fixed_playhead {
+                v.scroll = v.scroll.max(0.0);
+                v.target_scroll = v.target_scroll.max(0.0);
+            }
+            Ok(json!({"enabled": v.fixed_playhead, "anchor": v.playhead_anchor}))
+        }
         "timeline.nextScreen" | "timeline.prevScreen" => {
             let tv = &mut app.ui.timeline;
             let w = (app.last_timeline_width.max(200.0) - tv.header_w) as f64;
             let page = w / tv.pps.max(1e-6);
             let d = if id == "timeline.nextScreen" { page } else { -page };
-            tv.target_scroll = (tv.target_scroll + d).max(0.0);
-            Ok(json!({"scroll": tv.target_scroll}))
+            if tv.fixed_playhead {
+                let time = (app.session.playhead() + filmcraft_time::Tick::from_seconds_f64(d)).max(filmcraft_time::Tick::ZERO);
+                app.session.set_playhead(time);
+            } else {
+                tv.target_scroll = (tv.target_scroll + d).max(0.0);
+            }
+            Ok(json!({"scroll": app.ui.timeline.target_scroll}))
         }
         "mixer.showHideTracks" => Ok(crate::panels::mixer::open_show_hide_tracks(app, ctx)),
         "mixer.meterInputOnly" => crate::panels::mixer::set_meter_input_only(app, params),
